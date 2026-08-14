@@ -43,8 +43,7 @@ function pythonEnv(extra = {}) {
     PYTHONUNBUFFERED: "1",
     HF_HUB_DISABLE_SYMLINKS_WARNING: "1",
     HF_HUB_DISABLE_TELEMETRY: "1",
-    HF_HUB_DISABLE_PROGRESS_BARS: "0",
-    RUST_LOG: "error",
+        RUST_LOG: "error",
     HF_XET_LOG_LEVEL: "error",
     ...extra,
   };
@@ -556,9 +555,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hf_compat
 import torch
-hf_compat.patch_torch_hub_progress()
 from ruaccent import RUAccent
-print("AL: RUAccent... (progress below; large files take a few minutes)", flush=True)
+print("AL: RUAccent...", flush=True)
 a = RUAccent()
 a.load(omograph_model_size="turbo3.1", use_dictionary=True, device="CPU")
 print("AL: RUAccent ok", flush=True)

@@ -12,7 +12,6 @@ from typing import Optional
 import hf_compat  # noqa: F401
 
 import torch
-hf_compat.patch_torch_hub_progress()
 import soundfile as sf
 import numpy as np
 from fastapi import FastAPI, HTTPException
