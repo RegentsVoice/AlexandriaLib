@@ -1,15 +1,13 @@
-"""HF download: strip deprecated kwargs, quieter xet, progress on stdout (not red stderr)."""
+"""HF download: strip deprecated kwargs, quieter xet, single-line progress bar."""
 from __future__ import annotations
 
 import logging
 import os
 import sys
 
-# progress bars ON
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-# mute hf_xet JSON spam
 os.environ.setdefault("RUST_LOG", "error")
 os.environ.setdefault("HF_XET_LOG_LEVEL", "error")
 
@@ -22,35 +20,60 @@ def _strip_kwargs(kwargs: dict) -> dict:
     return kwargs
 
 
-def _route_progress_to_stdout() -> None:
-    """PowerShell paints stderr red — send tqdm + HF log lines to stdout."""
+def _enable_windows_vt() -> None:
+    """Allow \\r progress updates in Windows consoles (PowerShell / cmd)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for handle_id in (-11, -12):
+            handle = kernel32.GetStdHandle(handle_id)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0001 | 0x0002 | 0x0004)
+    except Exception:
+        pass
+
+
+def _route_progress() -> None:
+    _enable_windows_vt()
+
+    # tqdm needs a TTY that supports \\r — stderr is reliable on Windows.
+    bar_file = sys.stderr if sys.stderr.isatty() else (
+        sys.stdout if sys.stdout.isatty() else sys.stderr
+    )
+
     try:
         import tqdm as tqdm_mod
 
         _Tqdm = tqdm_mod.tqdm
 
-        class _TqdmOut(_Tqdm):
+        class _TqdmBar(_Tqdm):
             def __init__(self, *args, **kwargs):
-                kwargs.setdefault("file", sys.stdout)
+                kwargs["file"] = bar_file
                 kwargs.setdefault("dynamic_ncols", True)
+                kwargs.setdefault("mininterval", 0.3)
+                kwargs.setdefault("maxinterval", 2.0)
+                kwargs.setdefault("leave", True)
                 super().__init__(*args, **kwargs)
 
-        tqdm_mod.tqdm = _TqdmOut
+        tqdm_mod.tqdm = _TqdmBar
         try:
             import tqdm.auto as tqdm_auto
 
-            tqdm_auto.tqdm = _TqdmOut
+            tqdm_auto.tqdm = _TqdmBar
         except Exception:
             pass
     except Exception:
         pass
 
-    # HF "Downloading …" messages go through logging → often stderr
     class _StdoutHandler(logging.StreamHandler):
         def __init__(self):
             super().__init__(stream=sys.stdout)
 
-    for name in ("huggingface_hub", "huggingface_hub.file_download", "httpx"):
+    for name in ("huggingface_hub", "huggingface_hub.file_download"):
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.addHandler(_StdoutHandler())
@@ -66,7 +89,7 @@ def _route_progress_to_stdout() -> None:
 
 
 def apply() -> None:
-    _route_progress_to_stdout()
+    _route_progress()
 
     try:
         import huggingface_hub as hub
