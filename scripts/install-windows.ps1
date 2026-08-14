@@ -139,7 +139,6 @@ function Ensure-Python {
     Ok ("Python $v")
 }
 
-# --- resolve root ---
 $Root = $null
 if ((Test-Path 'package.json') -and ((Get-Content 'package.json' -Raw) -match '"name"\s*:\s*"alexandria-lib"')) {
     $Root = (Get-Location).Path
@@ -188,7 +187,6 @@ Step 'Python venv + pip + TTS models...'
 Write-Host '    (torch / Silero — first time can take several minutes)'
 Write-Host '    please wait, progress appears below...'
 $setupLog = Join-Path $env:TEMP 'al-setup.log'
-# show setup output live (not silent) so user sees activity
 npm run setup 2>&1 | Tee-Object -FilePath $setupLog
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'ERROR: setup failed — last lines:'
@@ -196,6 +194,16 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 Ok 'python + models'
+
+Step 'Installing hf_xet for faster model downloads...'
+$venvPython = Join-Path $Root 'python\.venv\Scripts\python.exe'
+if (Test-Path $venvPython) {
+    & $venvPython -m pip install hf_xet 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok 'hf_xet installed' }
+    else { Ok 'hf_xet not available, falling back to HTTP' }
+} else {
+    Ok 'venv python not found, skipping hf_xet'
+}
 
 Write-Host ''
 Write-Host '  ---------------------------------'
