@@ -1,9 +1,12 @@
-"""HF/torch download: strip deprecated kwargs, quiet xet, force single-line tqdm bars."""
+"""HF/torch download helpers: quiet xet, strip deprecated kwargs, single-line progress."""
 from __future__ import annotations
 
 import logging
 import os
 import sys
+import threading
+import time
+from pathlib import Path
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -36,19 +39,93 @@ def _enable_windows_vt() -> None:
         pass
 
 
-def _force_isatty() -> None:
-    """Node/npm child processes on Windows often report isatty()=False → tqdm uses \\n."""
-    for stream in (sys.stdout, sys.stderr):
+def _write_bar(msg: str) -> None:
+    try:
+        sys.stderr.write("\r" + msg[:110].ljust(110))
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _end_bar() -> None:
+    try:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def patch_torch_hub_progress() -> None:
+    """Disable torch tqdm spam; show one updating line with downloaded MB."""
+    try:
+        import torch.hub as hub
+    except Exception:
+        return
+
+    if getattr(hub.download_url_to_file, "_al_patched", False):
+        return
+
+    _orig = hub.download_url_to_file
+
+    def download_url_to_file(url, dst, hash_prefix=None, progress=True):
+        name = str(url).rstrip("/").split("/")[-1]
+        dst_p = Path(str(dst))
+        parent = dst_p.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        stop = threading.Event()
+
+        def _partial_size() -> int:
+            size = 0
+            try:
+                if dst_p.is_file():
+                    size = max(size, dst_p.stat().st_size)
+                for p in parent.glob("*"):
+                    if not p.is_file():
+                        continue
+                    n = p.name
+                    if n.startswith(dst_p.name) or n.endswith(".partial") or n.endswith(".tmp"):
+                        try:
+                            size = max(size, p.stat().st_size)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+            return size
+
+        def watcher():
+            while not stop.wait(0.4):
+                size = _partial_size()
+                if size > 0:
+                    _write_bar(f"AL: {name}  {size/1024/1024:6.1f} MB")
+                else:
+                    _write_bar(f"AL: downloading {name}...")
+
+        th = threading.Thread(target=watcher, daemon=True)
+        if progress:
+            th.start()
         try:
-            stream.isatty = lambda: True  # type: ignore[method-assign]
+            result = _orig(url, str(dst), hash_prefix=hash_prefix, progress=False)
+            if progress:
+                final = _partial_size()
+                if final:
+                    _write_bar(f"AL: {name}  {final/1024/1024:6.1f} MB  done")
+                else:
+                    _write_bar(f"AL: {name}  done")
+                _end_bar()
+            return result
         except Exception:
-            pass
+            if progress:
+                _end_bar()
+            raise
+        finally:
+            stop.set()
+
+    download_url_to_file._al_patched = True  # type: ignore[attr-defined]
+    hub.download_url_to_file = download_url_to_file
 
 
 def _patch_tqdm() -> None:
     _enable_windows_vt()
-    _force_isatty()
-
     try:
         import tqdm as tqdm_mod
         import tqdm.std as tqdm_std
@@ -58,19 +135,10 @@ def _patch_tqdm() -> None:
     _Base = tqdm_std.tqdm
 
     class _TqdmBar(_Base):
-        """Always refresh with \\r on one line — ignore isatty detection."""
-
         @staticmethod
         def status_printer(file):
-            fp = file or sys.stderr
-
             def print_status(s):
-                try:
-                    # pad to clear leftovers from longer previous lines
-                    fp.write("\r" + s + "   ")
-                    fp.flush()
-                except Exception:
-                    pass
+                _write_bar(s)
 
             return print_status
 
@@ -78,20 +146,14 @@ def _patch_tqdm() -> None:
             kwargs.setdefault("file", sys.stderr)
             kwargs.setdefault("dynamic_ncols", False)
             kwargs.setdefault("ncols", 88)
-            kwargs.setdefault("mininterval", 0.25)
-            kwargs.setdefault("maxinterval", 1.5)
+            kwargs.setdefault("mininterval", 0.3)
             kwargs.setdefault("leave", True)
-            kwargs.setdefault("ascii", True)  # wider Windows font compatibility
+            kwargs.setdefault("ascii", True)
             super().__init__(*args, **kwargs)
 
         def close(self):
             super().close()
-            try:
-                # finish with newline so next logs don't overwrite the bar
-                (self.fp or sys.stderr).write("\n")
-                (self.fp or sys.stderr).flush()
-            except Exception:
-                pass
+            _end_bar()
 
     tqdm_mod.tqdm = _TqdmBar
     tqdm_std.tqdm = _TqdmBar
@@ -102,7 +164,6 @@ def _patch_tqdm() -> None:
     except Exception:
         pass
 
-    # torch.hub may do "from tqdm.auto import tqdm" — already patched above if after us
     try:
         from huggingface_hub.utils import enable_progress_bars
 
@@ -125,6 +186,7 @@ def _route_hf_logs() -> None:
 
 
 def apply() -> None:
+    _enable_windows_vt()
     _patch_tqdm()
     _route_hf_logs()
 

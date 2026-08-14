@@ -554,8 +554,9 @@ function predownloadModels() {
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import hf_compat  # strips deprecated local_dir_use_symlinks before downloads
+import hf_compat
 import torch
+hf_compat.patch_torch_hub_progress()
 from ruaccent import RUAccent
 print("AL: RUAccent... (progress below; large files take a few minutes)", flush=True)
 a = RUAccent()
