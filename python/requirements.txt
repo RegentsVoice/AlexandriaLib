@@ -9,4 +9,8 @@ fastapi
 uvicorn[standard]
 python-multipart
 pydantic
-huggingface_hub[hf_xet]
+# hub 1.x removed HfFolder; old transformers (ruaccent) needs hub 0.x
+huggingface_hub>=0.24.0,<1.0.0
+hf_xet>=1.0.0
+transformers>=4.40.0,<4.50.0
+tokenizers>=0.15.0
