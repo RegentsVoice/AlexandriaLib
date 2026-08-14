@@ -557,7 +557,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hf_compat  # strips deprecated local_dir_use_symlinks before downloads
 import torch
 from ruaccent import RUAccent
-print("AL: RUAccent...", flush=True)
+print("AL: RUAccent... (progress below; large files take a few minutes)", flush=True)
 a = RUAccent()
 a.load(omograph_model_size="turbo3.1", use_dictionary=True, device="CPU")
 print("AL: RUAccent ok", flush=True)
