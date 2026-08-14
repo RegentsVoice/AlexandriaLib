@@ -536,12 +536,20 @@ function installPythonDeps() {
 function predownloadModels() {
   log("downloading TTS models (RUAccent + Silero)...");
   const preloadCode = `
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import hf_compat  # strips deprecated local_dir_use_symlinks before downloads
 import torch
 from ruaccent import RUAccent
+print("AL: RUAccent...", flush=True)
 a = RUAccent()
 a.load(omograph_model_size="turbo3.1", use_dictionary=True, device="CPU")
+print("AL: RUAccent ok", flush=True)
+print("AL: Silero TTS...", flush=True)
 torch.hub.load(repo_or_dir="snakers4/silero-models", model="silero_tts",
   language="ru", speaker="v5_ru", trust_repo=True)
+print("AL: Silero ok", flush=True)
 `;
   const tmpFile = path.join(PYTHON_DIR, "_preload.py");
   fs.writeFileSync(tmpFile, preloadCode, "utf8");
@@ -602,6 +610,8 @@ function startPythonServer() {
         TORCH_HOME: path.join(PYTHON_DIR, ".torch"),
         HF_HOME: path.join(PYTHON_DIR, ".hf"),
         PYTHONUNBUFFERED: "1",
+        HF_HUB_DISABLE_SYMLINKS_WARNING: "1",
+        HF_HUB_DISABLE_TELEMETRY: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

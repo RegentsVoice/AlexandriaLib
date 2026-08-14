@@ -9,6 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import hf_compat  # noqa: F401  — strip deprecated local_dir_use_symlinks
+
 import torch
 import soundfile as sf
 import numpy as np
