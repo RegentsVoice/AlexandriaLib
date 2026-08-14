@@ -149,13 +149,13 @@ function loadSettings() {
     const s = JSON.parse((localStorage.getItem("al_settings") || localStorage.getItem("sr_settings")) || "{}");
     
     if (s.layoutMode === "spread" || s.layoutMode === "page") s.layoutMode = "pages";
-    if (!s.layoutMode) s.layoutMode = "scroll";
+    if (!s.layoutMode) s.layoutMode = "pages";
     if (!s.theme) s.theme = "sepia";
     if (!s.pageIndicatorMode) s.pageIndicatorMode = "total";
     if (s.volume == null) s.volume = 1;
     return s;
   } catch {
-    return { layoutMode: "scroll", theme: "sepia", pageIndicatorMode: "total", volume: 1 };
+    return { layoutMode: "pages", theme: "sepia", pageIndicatorMode: "total", volume: 1 };
   }
 }
 
@@ -207,7 +207,7 @@ function applySettings() {
   if ($("#themeSelect")) $("#themeSelect").value = theme;
   if ($("#contentWidth")) $("#contentWidth").value = width;
   if ($("#layoutMode")) {
-    let lm = settings.layoutMode || "scroll";
+    let lm = settings.layoutMode || "pages";
     if (lm === "spread" || lm === "page") lm = "pages";
     $("#layoutMode").value = lm;
   }
@@ -609,7 +609,7 @@ function pageCacheKey(chIndex, mode, w, h, fontSize, lineHeight) {
 }
 
 function getLayoutMode() {
-  let m = settings.layoutMode || "scroll";
+  let m = settings.layoutMode || "pages";
   if (m === "spread" || m === "page") m = "pages";
   return m;
 }
@@ -1021,9 +1021,7 @@ $("#fileInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const status = $("#uploadStatus");
-  status.classList.remove("hidden", "error", "ok");
-  status.textContent = "Загрузка и обработка...";
+  showToast("Загрузка «" + file.name + "»…", "ok", 2500);
 
   const form = new FormData();
   form.append("book", file);
@@ -1033,13 +1031,10 @@ $("#fileInput").addEventListener("change", async (e) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Ошибка");
 
-    status.classList.add("ok");
-    status.textContent = `Добавлено: «${data.title}» (${data.chaptersCount} гл.)`;
+    showToast(`Добавлено: «${data.title}» (${data.chaptersCount} гл.)`, "ok", 3500);
     await loadBooks();
-    setTimeout(() => status.classList.add("hidden"), 3000);
   } catch (err) {
-    status.classList.add("error");
-    status.textContent = err.message;
+    showToast(err.message || "Ошибка загрузки", "error");
   }
 
   e.target.value = "";
