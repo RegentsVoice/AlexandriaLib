@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4ecd8" />
+  <title>AlexandriaLib</title>
+  <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" />
+  <link rel="icon" type="image/png" sizes="1024x1024" href="/logo.png" />
+  <link rel="apple-touch-icon" href="/logo.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-theme="sepia">
+  
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-back" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M20 20l-3-3"/></symbol>
+    <symbol id="i-toc" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.48.48 0 0 0-.48.41l-.36 2.54c-.57.23-1.1.54-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.3.59.22l2.39-.96c.5.4 1.05.71 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.57-.23 1.1-.54 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
+    </symbol>
+    <symbol id="i-headphones" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 18 0v6a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3M3 12v6a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M7 5h3a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm7 0h3a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zm3.5.14a1 1 0 0 1 1.5-.86l9 5.86a1 1 0 0 1 0 1.72l-9 5.86a1 1 0 0 1-1.5-.86V5.14z" transform="scale(-1 1) translate(-24 0)"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M17 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zM5.5 5.14a1 1 0 0 1 1.5-.86l9 5.86a1 1 0 0 1 0 1.72l-9 5.86a1 1 0 0 1-1.5-.86V5.14z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  </svg>
+
+  
+  <div id="libraryView" class="view">
+    <header class="lib-header">
+      <h1>AlexandriaLib</h1>
+      <div class="lib-header-actions">
+        <button type="button" id="btnSettingsLib" class="btn-icon" title="Настройки" aria-label="Настройки">
+          <svg class="icon"><use href="#i-settings"/></svg>
+        </button>
+        <label class="btn-icon btn-primary-icon" title="Добавить книгу">
+          <input type="file" id="fileInput" accept=".txt,.fb2,.epub" hidden />
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+        </label>
+      </div>
+    </header>
+
+    <div class="lib-toolbar">
+      <div class="search-field">
+        <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+        <input type="search" id="libSearch" class="lib-search" placeholder="Поиск" enterkeyhint="search" />
+      </div>
+      <div class="sort-field">
+        <select id="libSort" class="lib-sort" title="Сортировка" aria-label="Сортировка">
+          <option value="recent">Недавние</option>
+          <option value="progress">По прогрессу</option>
+          <option value="title">Название А–Я</option>
+          <option value="author">Автор А–Я</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="libStatusFilter" class="status-chips" role="tablist" aria-label="Статус">
+      <button type="button" class="chip active" data-status="all">Все</button>
+      <button type="button" class="chip" data-status="reading">Читаю</button>
+      <button type="button" class="chip" data-status="queue">В очереди</button>
+      <button type="button" class="chip" data-status="finished">Прочитано</button>
+    </div>
+
+    <div id="uploadStatus" class="upload-status hidden" role="status"></div>
+
+    <section id="continueSection" class="lib-section hidden">
+      <div class="lib-section-head">
+        <h2 class="lib-section-title">Продолжить</h2>
+      </div>
+      <div id="continueList" class="continue-row"></div>
+    </section>
+
+    <section class="lib-section">
+      <div class="lib-section-head">
+        <h2 class="lib-section-title" id="librarySectionTitle">Все книги</h2>
+      </div>
+      <div id="booksList" class="books-grid"></div>
+    </section>
+
+    <div id="emptyState" class="empty-state">
+      <div class="empty-icon" aria-hidden="true">
+        <svg class="icon xl"><use href="#i-book"/></svg>
+      </div>
+      <p class="empty-title">Пока нет книг</p>
+      <p class="hint">Загрузите .txt, .fb2 или .epub</p>
+    </div>
+  </div>
+
+  
+  <div id="readerView" class="view hidden">
+    <header class="reader-header">
+      <button id="btnBack" class="btn-icon" title="Назад" aria-label="Назад">
+        <svg class="icon"><use href="#i-back"/></svg>
+      </button>
+      <div class="reader-title-wrap">
+        <div id="readerTitle" class="reader-title"></div>
+        <div id="readerAuthor" class="reader-author"></div>
+      </div>
+      <button type="button" id="sleepHeaderBadge" class="sleep-header-badge hidden" title="Таймер сна" aria-label="Таймер сна">
+        <svg class="icon sleep-header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2"/></svg>
+        <span id="sleepHeaderText">0:00</span>
+      </button>
+      <button id="btnToc" class="btn-icon" title="Оглавление" aria-label="Оглавление">
+        <svg class="icon"><use href="#i-toc"/></svg>
+      </button>
+      <button id="btnSettings" class="btn-icon" title="Настройки" aria-label="Настройки">
+        <svg class="icon"><use href="#i-settings"/></svg>
+      </button>
+      <button id="btnTtsPanel" class="btn-icon" title="Озвучка" aria-label="Озвучка">
+        <svg class="icon"><use href="#i-headphones"/></svg>
+      </button>
+    </header>
+
+    <div id="ttsPanel" class="tts-panel hidden" role="dialog" aria-label="Озвучка">
+      <div class="tts-panel-inner">
+        <div class="tts-panel-top">
+          <span class="tts-panel-title">Озвучка</span>
+          <button id="btnTtsPanelClose" class="btn-icon sm" title="Закрыть" aria-label="Закрыть">
+            <svg class="icon"><use href="#i-close"/></svg>
+          </button>
+        </div>
+
+        <div class="tts-transport">
+          <button id="btnTtsPrev" class="tts-btn" title="Предыдущее" aria-label="Предыдущее">
+            <svg class="icon"><use href="#i-prev"/></svg>
+          </button>
+          <button id="btnTtsPlay" class="tts-btn primary tts-play" title="Слушать" aria-label="Слушать">
+            <svg class="icon icon-play"><use href="#i-play"/></svg>
+          </button>
+          <button id="btnTtsNext" class="tts-btn" title="Следующее" aria-label="Следующее">
+            <svg class="icon"><use href="#i-next"/></svg>
+          </button>
+</div>
+
+        <label class="tts-field">
+          <span class="tts-field-label">Голос</span>
+          <select id="ttsSpeaker">
+            <option value="xenia">xenia — женский</option>
+            <option value="kseniya">kseniya — женский</option>
+            <option value="baya">baya — женский</option>
+            <option value="aidar">aidar — мужской</option>
+            <option value="eugene">eugene — мужской</option>
+          </select>
+        </label>
+
+        <label class="tts-field">
+          <span class="tts-field-label">Скорость <b id="ttsSpeedVal">1.0×</b></span>
+          <input type="range" id="ttsSpeed" min="0.7" max="1.4" step="0.05" value="1.0" />
+        </label>
+
+        <label class="tts-field">
+          <span class="tts-field-label">Громкость <b id="ttsVolumeVal">100%</b></span>
+          <input type="range" id="ttsVolume" min="0" max="1" step="0.05" value="1" />
+        </label>
+
+        <div class="tts-field">
+          <span class="tts-field-label">Таймер сна <b id="ttsSleepVal">Выкл</b></span>
+          <input type="range" id="ttsSleepRange" min="0" max="7" step="1" value="0" />
+          <div class="tts-sleep-row">
+            <button type="button" id="btnTtsSleepStart" class="tts-sleep-btn" disabled>Старт</button>
+            <button type="button" id="btnTtsSleepCancel" class="tts-sleep-btn ghost hidden">Сброс</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="reader-view-wrap">
+      <div class="page-nav-zone left" id="pageNavPrev" aria-label="Предыдущая страница"></div>
+      <div class="page-nav-zone right" id="pageNavNext" aria-label="Следующая страница"></div>
+      <div id="readerContent" class="reader-content layout-scroll"></div>
+      <div class="page-indicator" id="pageIndicator"></div>
+    </div>
+    <audio id="ttsAudio" class="hidden"></audio>
+  </div>
+
+
+  
+  <div id="bookDetailView" class="view hidden">
+    <header class="detail-header">
+      <button id="btnDetailBack" class="btn-icon" title="Назад" aria-label="Назад">
+        <svg class="icon"><use href="#i-back"/></svg>
+      </button>
+      <div class="detail-header-spacer"></div>
+      <button type="button" id="btnSettingsDetail" class="btn-icon" title="Настройки" aria-label="Настройки">
+        <svg class="icon"><use href="#i-settings"/></svg>
+      </button>
+      <button id="btnDetailDelete" class="btn-icon" title="Удалить" aria-label="Удалить">
+        <svg class="icon"><use href="#i-trash"/></svg>
+      </button>
+    </header>
+    <div class="detail-scroll">
+      <div class="detail-hero">
+        <div id="detailCover" class="detail-cover"></div>
+      </div>
+      <div class="detail-body">
+        <input id="detailTitle" class="detail-title-input" type="text" maxlength="300" placeholder="Название" autocomplete="off" />
+        <input id="detailAuthor" class="detail-author-input" type="text" maxlength="200" placeholder="Автор" autocomplete="off" />
+        <div id="detailMeta" class="detail-meta"></div>
+        <div class="detail-fields">
+          <label class="detail-field">
+            <span>Серия</span>
+            <input id="detailSeries" type="text" class="field-input" maxlength="200" placeholder="—" autocomplete="off" />
+          </label>
+          <label class="detail-field">
+            <span>Год</span>
+            <input id="detailYear" type="number" class="field-input" min="1" max="2100" placeholder="—" />
+          </label>
+          <label class="detail-field">
+            <span>Статус</span>
+            <select id="detailStatus" class="field-input">
+              <option value="queue">В очереди</option>
+              <option value="reading">Читаю</option>
+              <option value="finished">Прочитано</option>
+            </select>
+          </label>
+        </div>
+        <div class="detail-progress-block">
+          <div class="detail-progress-label">
+            <span>Прогресс</span>
+            <span id="detailProgressVal">0%</span>
+          </div>
+          <div class="progress-bar detail-progress-bar"><div id="detailProgressBar" style="width:0%"></div></div>
+        </div>
+        <label class="detail-field detail-field-block">
+          <span>Описание</span>
+          <textarea id="detailDesc" class="field-input field-textarea" rows="4" maxlength="2000" placeholder="Добавить описание…"></textarea>
+        </label>
+        <div class="detail-actions">
+          <button id="btnDetailRead" class="btn-primary">Читать</button>
+          <button id="btnDetailContinue" class="btn-secondary hidden">Продолжить</button>
+        </div>
+        <p class="detail-save-hint" id="detailSaveHint"></p>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="tocOverlay" class="overlay hidden" role="dialog" aria-label="Оглавление">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <h2>Оглавление</h2>
+        <button id="btnCloseToc" class="btn-icon sm" aria-label="Закрыть">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <div id="tocList" class="toc-list"></div>
+    </div>
+  </div>
+
+  
+    <div id="settingsOverlay" class="overlay hidden" role="dialog" aria-label="Настройки">
+    <div class="overlay-panel settings-panel">
+      <div class="overlay-header">
+        <h2>Настройки</h2>
+        <button id="btnCloseSettings" class="btn-icon sm" aria-label="Закрыть">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-tabs" role="tablist" aria-label="Разделы">
+          <button type="button" class="settings-tab active" data-tab="text" role="tab" aria-selected="true">Текст</button>
+          <button type="button" class="settings-tab" data-tab="theme" role="tab" aria-selected="false">Тема</button>
+          <button type="button" class="settings-tab" data-tab="layout" role="tab" aria-selected="false">Страницы</button>
+          <button type="button" class="settings-tab" data-tab="tts" role="tab" aria-selected="false">Озвучка</button>
+        </nav>
+        <div class="settings-body">
+          <div class="settings-pane active" data-pane="text" role="tabpanel">
+            <label class="settings-row">
+              <span>Размер шрифта</span>
+              <div class="settings-control">
+                <input type="range" id="fontSize" min="14" max="28" step="1" value="18" />
+                <span id="fontSizeVal" class="val">18</span>
+              </div>
+            </label>
+            <label class="settings-row">
+              <span>Межстрочный</span>
+              <div class="settings-control">
+                <input type="range" id="lineHeight" min="1.3" max="2.0" step="0.1" value="1.6" />
+                <span id="lineHeightVal" class="val">1.6</span>
+              </div>
+            </label>
+            <label class="settings-row">
+              <span>Ширина текста</span>
+              <select id="contentWidth">
+                <option value="narrow">Узкая</option>
+                <option value="normal" selected>Обычная</option>
+                <option value="wide">Широкая</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-pane" data-pane="theme" role="tabpanel" hidden>
+            <label class="settings-row">
+              <span>Тема оформления</span>
+              <select id="themeSelect">
+                <option value="dark">Тёмная</option>
+                <option value="light">Светлая</option>
+                <option value="sepia" selected>Сепия</option>
+                <option value="black">Чёрная (OLED)</option>
+              </select>
+            </label>
+            <div class="theme-swatches" id="themeSwatches">
+              <button type="button" class="theme-swatch" data-theme="dark" title="Тёмная" style="--sw-bg:#0b0b0c; --sw-fg:#f5f5f7"></button>
+              <button type="button" class="theme-swatch" data-theme="light" title="Светлая" style="--sw-bg:#f2f2f7; --sw-fg:#1c1c1e"></button>
+              <button type="button" class="theme-swatch" data-theme="sepia" title="Сепия" style="--sw-bg:#f4ecd8; --sw-fg:#3e3226"></button>
+              <button type="button" class="theme-swatch" data-theme="black" title="Чёрная" style="--sw-bg:#000000; --sw-fg:#e8e8e8"></button>
+            </div>
+          </div>
+          <div class="settings-pane" data-pane="layout" role="tabpanel" hidden>
+            <label class="settings-row">
+              <span>Режим чтения</span>
+              <select id="layoutMode">
+                <option value="scroll" selected>Лента</option>
+                <option value="pages">Страницы</option>
+              </select>
+            </label>
+            <label class="settings-row">
+              <span>Пагинация</span>
+              <select id="pageIndicatorMode">
+                <option value="total" selected>Общее число страниц</option>
+                <option value="chapter">По главам</option>
+              </select>
+            </label>
+            <p class="settings-hint">Лента — непрерывная прокрутка. Страницы — листание экранами (на широком экране по две). Пагинация задаёт формат счётчика внизу.</p>
+          </div>
+          <div class="settings-pane" data-pane="tts" role="tabpanel" hidden>
+            <label class="settings-row">
+              <span>Голос по умолчанию</span>
+              <select id="settingsSpeaker">
+                <option value="xenia">xenia — женский</option>
+                <option value="kseniya">kseniya — женский</option>
+                <option value="baya">baya — женский</option>
+                <option value="aidar">aidar — мужской</option>
+                <option value="eugene">eugene — мужской</option>
+              </select>
+            </label>
+            <label class="settings-row">
+              <span>Скорость <b id="settingsSpeedVal">1.0×</b></span>
+              <div class="settings-control">
+                <input type="range" id="settingsSpeed" min="0.7" max="1.4" step="0.05" value="1.0" />
+              </div>
+            </label>
+            <p class="settings-hint">Также доступно в панели озвучки во время чтения.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastHost" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
