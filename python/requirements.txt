@@ -9,3 +9,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 pydantic
+huggingface_hub[hf_xet]

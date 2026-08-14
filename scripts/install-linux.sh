@@ -233,12 +233,6 @@ else
   exit 1
 fi
 
-step "Installing hf_xet for faster model downloads..."
-spin_start "pip install hf_xet"
-"$ROOT/python/.venv/bin/pip" install hf_xet >/tmp/al-hfxet.log 2>&1 || true
-spin_stop
-ok "hf_xet installed (if available)"
-
 echo ""
 echo "  -------------------------------"
 echo "  Installation complete"
