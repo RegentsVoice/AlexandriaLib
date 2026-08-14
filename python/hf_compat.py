@@ -1,4 +1,4 @@
-"""HF download: strip deprecated kwargs, quieter xet, single-line progress bar."""
+"""HF/torch download: strip deprecated kwargs, quiet xet, force single-line tqdm bars."""
 from __future__ import annotations
 
 import logging
@@ -21,7 +21,6 @@ def _strip_kwargs(kwargs: dict) -> dict:
 
 
 def _enable_windows_vt() -> None:
-    """Allow \\r progress updates in Windows consoles (PowerShell / cmd)."""
     if sys.platform != "win32":
         return
     try:
@@ -37,38 +36,82 @@ def _enable_windows_vt() -> None:
         pass
 
 
-def _route_progress() -> None:
-    _enable_windows_vt()
+def _force_isatty() -> None:
+    """Node/npm child processes on Windows often report isatty()=False → tqdm uses \\n."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.isatty = lambda: True  # type: ignore[method-assign]
+        except Exception:
+            pass
 
-    # tqdm needs a TTY that supports \\r — stderr is reliable on Windows.
-    bar_file = sys.stderr if sys.stderr.isatty() else (
-        sys.stdout if sys.stdout.isatty() else sys.stderr
-    )
+
+def _patch_tqdm() -> None:
+    _enable_windows_vt()
+    _force_isatty()
 
     try:
         import tqdm as tqdm_mod
+        import tqdm.std as tqdm_std
+    except ImportError:
+        return
 
-        _Tqdm = tqdm_mod.tqdm
+    _Base = tqdm_std.tqdm
 
-        class _TqdmBar(_Tqdm):
-            def __init__(self, *args, **kwargs):
-                kwargs["file"] = bar_file
-                kwargs.setdefault("dynamic_ncols", True)
-                kwargs.setdefault("mininterval", 0.3)
-                kwargs.setdefault("maxinterval", 2.0)
-                kwargs.setdefault("leave", True)
-                super().__init__(*args, **kwargs)
+    class _TqdmBar(_Base):
+        """Always refresh with \\r on one line — ignore isatty detection."""
 
-        tqdm_mod.tqdm = _TqdmBar
-        try:
-            import tqdm.auto as tqdm_auto
+        @staticmethod
+        def status_printer(file):
+            fp = file or sys.stderr
 
-            tqdm_auto.tqdm = _TqdmBar
-        except Exception:
-            pass
+            def print_status(s):
+                try:
+                    # pad to clear leftovers from longer previous lines
+                    fp.write("\r" + s + "   ")
+                    fp.flush()
+                except Exception:
+                    pass
+
+            return print_status
+
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("file", sys.stderr)
+            kwargs.setdefault("dynamic_ncols", False)
+            kwargs.setdefault("ncols", 88)
+            kwargs.setdefault("mininterval", 0.25)
+            kwargs.setdefault("maxinterval", 1.5)
+            kwargs.setdefault("leave", True)
+            kwargs.setdefault("ascii", True)  # wider Windows font compatibility
+            super().__init__(*args, **kwargs)
+
+        def close(self):
+            super().close()
+            try:
+                # finish with newline so next logs don't overwrite the bar
+                (self.fp or sys.stderr).write("\n")
+                (self.fp or sys.stderr).flush()
+            except Exception:
+                pass
+
+    tqdm_mod.tqdm = _TqdmBar
+    tqdm_std.tqdm = _TqdmBar
+    try:
+        import tqdm.auto as tqdm_auto
+
+        tqdm_auto.tqdm = _TqdmBar
     except Exception:
         pass
 
+    # torch.hub may do "from tqdm.auto import tqdm" — already patched above if after us
+    try:
+        from huggingface_hub.utils import enable_progress_bars
+
+        enable_progress_bars()
+    except Exception:
+        pass
+
+
+def _route_hf_logs() -> None:
     class _StdoutHandler(logging.StreamHandler):
         def __init__(self):
             super().__init__(stream=sys.stdout)
@@ -80,16 +123,10 @@ def _route_progress() -> None:
         lg.setLevel(logging.INFO)
         lg.propagate = False
 
-    try:
-        from huggingface_hub.utils import enable_progress_bars
-
-        enable_progress_bars()
-    except Exception:
-        pass
-
 
 def apply() -> None:
-    _route_progress()
+    _patch_tqdm()
+    _route_hf_logs()
 
     try:
         import huggingface_hub as hub
