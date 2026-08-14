@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.png" alt="OPEN Booru" width="180" />
+</p>
+
 **AlexandriaLib** — локальная библиотека и читалка с озвучкой **Silero** (русский).
 
 ### Возможности

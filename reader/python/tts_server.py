@@ -23,15 +23,16 @@ CACHE_DIR.mkdir(exist_ok=True)
 SAMPLE_RATE = 48000
 AVAILABLE_SPEAKERS = ["xenia", "aidar", "eugene", "kseniya", "baya"]
 
-print("AL: RUAccent...", flush=True)
+print("Загрузка RUAccent...")
 accentizer = RUAccent()
 accentizer.load(
     omograph_model_size="turbo3.1",
     use_dictionary=True,
     device="CPU",
 )
-print("AL: RUAccent ok", flush=True)
-print("AL: Silero TTS...", flush=True)
+print("RUAccent готов")
+
+print("Загрузка TTS...")
 device = torch.device("cpu")
 model, _ = torch.hub.load(
     repo_or_dir="snakers4/silero-models",
@@ -41,7 +42,7 @@ model, _ = torch.hub.load(
     trust_repo=True,
 )
 model.to(device)
-print("AL: Silero ok", flush=True)
+print("TTS готов")
 
 app = FastAPI(title="AlexandriaLib TTS", version="1.0.0")
 
@@ -146,5 +147,4 @@ def speakers():
 
 if __name__ == "__main__":
     import uvicorn
-    print("AL: TTS server listening :8765", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
