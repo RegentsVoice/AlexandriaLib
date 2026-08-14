@@ -35,13 +35,28 @@ function log(msg) {
   console.log(`[AL] ${msg}`);
 }
 
+function pythonEnv(extra = {}) {
+  return {
+    ...process.env,
+    TORCH_HOME: path.join(PYTHON_DIR, ".torch"),
+    HF_HOME: path.join(PYTHON_DIR, ".hf"),
+    PYTHONUNBUFFERED: "1",
+    HF_HUB_DISABLE_SYMLINKS_WARNING: "1",
+    HF_HUB_DISABLE_TELEMETRY: "1",
+    HF_HUB_DISABLE_PROGRESS_BARS: "0",
+    RUST_LOG: "error",
+    HF_XET_LOG_LEVEL: "error",
+    ...extra,
+  };
+}
+
 function run(cmd, opts = {}) {
   const quiet = opts.quiet !== false;
   try {
     return execSync(cmd, {
       stdio: quiet ? ["ignore", "pipe", "pipe"] : "inherit",
       cwd: opts.cwd || ROOT,
-      env: { ...process.env, ...opts.env },
+      env: pythonEnv(opts.env || {}),
       shell: true,
       encoding: "utf8",
     });
@@ -605,14 +620,7 @@ function startPythonServer() {
     let logBuf = "";
     pythonProcess = spawn(pythonBin, [TTS_SCRIPT], {
       cwd: PYTHON_DIR,
-      env: {
-        ...process.env,
-        TORCH_HOME: path.join(PYTHON_DIR, ".torch"),
-        HF_HOME: path.join(PYTHON_DIR, ".hf"),
-        PYTHONUNBUFFERED: "1",
-        HF_HUB_DISABLE_SYMLINKS_WARNING: "1",
-        HF_HUB_DISABLE_TELEMETRY: "1",
-      },
+      env: pythonEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -634,6 +642,10 @@ function startPythonServer() {
       const text = data.toString();
       logBuf += text;
       if (logBuf.length > 12000) logBuf = logBuf.slice(-8000);
+      // tqdm / progress bars often use \r without newline — pass through
+      if (/\r|%\|█|Downloading|Fetching|Fetching [0-9]|Loading/.test(text)) {
+        process.stdout.write(text);
+      }
       for (const line of text.split(/\r?\n/)) {
         const s = line.trim();
         if (!s) continue;

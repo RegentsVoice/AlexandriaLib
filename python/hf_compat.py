@@ -1,10 +1,16 @@
-"""Strip deprecated huggingface_hub kwargs used by older callers (ruaccent/transformers)."""
+"""HF download compatibility + quieter xet logs, keep progress bars."""
 from __future__ import annotations
 
 import os
 
+# progress bars ON (tqdm in console)
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+# mute hf_xet JSON spam (INFO config dumps) — errors still show
+os.environ.setdefault("RUST_LOG", "error")
+os.environ.setdefault("HF_XET_LOG_LEVEL", "error")
+os.environ.setdefault("HF_HUB_VERBOSITY", "info")
 
 _DEPRECATED = ("local_dir_use_symlinks",)
 
@@ -39,7 +45,6 @@ def apply() -> None:
 
         setattr(hub, name, _wrap(fn))
 
-    # file_download module often holds the real implementations
     try:
         from huggingface_hub import file_download as fd
 
