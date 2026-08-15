@@ -4,13 +4,7 @@ $RepoUrl  = if ($env:ALEXANDRIA_REPO) { $env:ALEXANDRIA_REPO } else { 'https://g
 $RepoName = 'AlexandriaLib'
 $MinNode  = 18
 
-Write-Host ''
-Write-Host '  AlexandriaLib installer (Windows)'
-Write-Host '  ---------------------------------'
-Write-Host ''
-
-function Step([string]$Msg) { Write-Host "==> $Msg" }
-function Ok([string]$Msg)   { Write-Host "    ok: $Msg" }
+Write-Host 'AlexandriaLib installer (Windows)'
 
 function Test-Cmd([string]$Name) {
     try { Get-Command $Name -EA Stop | Out-Null; return $true } catch { return $false }
@@ -24,7 +18,7 @@ function Refresh-Path {
 function Install-WingetPkg([string]$Id) {
     if (-not (Test-Cmd 'winget')) { return $false }
     try {
-        winget install --id $Id -e --accept-package-agreements --accept-source-agreements --silent | Out-Null
+        winget install --id $Id -e --accept-package-agreements --accept-source-agreements --silent
         Refresh-Path
         return $true
     } catch {
@@ -32,35 +26,12 @@ function Install-WingetPkg([string]$Id) {
     }
 }
 
-function Invoke-WithSpinner {
-    param(
-        [string]$Message,
-        [scriptblock]$Action
-    )
-    $frames = @('|', '/', '-', '\')
-    $i = 0
-    $job = Start-Job -ScriptBlock $Action
-    while ($job.State -eq 'Running') {
-        Write-Host -NoNewline ("`r    {0} {1}" -f $Message, $frames[$i % 4])
-        $i++
-        Start-Sleep -Milliseconds 200
-    }
-    Write-Host -NoNewline ("`r" + (' ' * 60) + "`r")
-    $result = Receive-Job $job -ErrorAction SilentlyContinue
-    $err = $job.ChildJobs[0].Error
-    Remove-Job $job -Force -ErrorAction SilentlyContinue
-    if ($job.State -eq 'Failed' -or $err) {
-        throw ($err | Out-String)
-    }
-    return $result
-}
-
 function Ensure-Git {
     if (Test-Cmd 'git') {
-        Ok ("git " + (git --version))
+        Write-Host ("git: " + (git --version))
         return
     }
-    Step 'Installing git...'
+    Write-Host 'Installing git...'
     if (-not (Install-WingetPkg 'Git.Git')) {
         Write-Host 'ERROR: install Git for Windows: https://git-scm.com/download/win'
         exit 1
@@ -70,19 +41,19 @@ function Ensure-Git {
         Write-Host 'ERROR: git installed but not on PATH. Open a NEW PowerShell and re-run.'
         exit 1
     }
-    Ok 'git installed'
+    Write-Host 'git installed'
 }
 
 function Ensure-Node {
     if ((Test-Cmd 'node') -and (Test-Cmd 'npm')) {
         $major = [int]((node -v) -replace '^v', '').Split('.')[0]
         if ($major -ge $MinNode) {
-            Ok ("Node $(node -v), npm $(npm -v)")
+            Write-Host ("Node: $(node -v), npm: $(npm -v)")
             return
         }
-        Step "Node $(node -v) is too old (< $MinNode), upgrading..."
+        Write-Host "Node $(node -v) is too old (< $MinNode), upgrading..."
     } else {
-        Step 'Installing Node.js LTS...'
+        Write-Host 'Installing Node.js LTS...'
     }
     if (-not (Install-WingetPkg 'OpenJS.NodeJS.LTS')) {
         Write-Host 'ERROR: install Node.js LTS from https://nodejs.org/ and re-run.'
@@ -98,7 +69,7 @@ function Ensure-Node {
         Write-Host "ERROR: Node.js >= $MinNode required (found $(node -v))"
         exit 1
     }
-    Ok ("Node $(node -v)")
+    Write-Host ("Node: $(node -v)")
 }
 
 function Ensure-Python {
@@ -119,10 +90,10 @@ function Ensure-Python {
     }
     if ($py) {
         $v = & $py -V 2>&1
-        Ok ("Python $v")
+        Write-Host ("Python: $v")
         return
     }
-    Step 'Installing Python 3.12...'
+    Write-Host 'Installing Python 3.12...'
     if (-not (Install-WingetPkg 'Python.Python.3.12')) {
         if (-not (Install-WingetPkg 'Python.Python.3.11')) {
             Write-Host 'ERROR: install Python 3.9+ from https://www.python.org/downloads/'
@@ -136,72 +107,56 @@ function Ensure-Python {
         exit 1
     }
     $v = if (Test-Cmd 'python') { python -V 2>&1 } else { py -V 2>&1 }
-    Ok ("Python $v")
+    Write-Host ("Python: $v")
 }
 
-# --- resolve root ---
 $Root = $null
 if ((Test-Path 'package.json') -and ((Get-Content 'package.json' -Raw) -match '"name"\s*:\s*"alexandria-lib"')) {
     $Root = (Get-Location).Path
-    Step 'Using current directory'
+    Write-Host 'Using current directory'
 } elseif ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot '..\package.json'))) {
     $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-    Step 'Using repo next to script'
+    Write-Host 'Using repo next to script'
 } else {
     Ensure-Git
     Ensure-Node
     Ensure-Python
     $Target = if ($env:ALEXANDRIA_DIR) { $env:ALEXANDRIA_DIR } else { Join-Path $HOME $RepoName }
     if (Test-Path (Join-Path $Target '.git')) {
-        Step "Updating $Target"
+        Write-Host "Updating $Target"
         git -C $Target pull --ff-only 2>$null | Out-Null
-        Ok 'updated'
     } else {
-        Step "Cloning repository → $Target"
-        Write-Host '    git clone in progress...'
+        Write-Host "Cloning repository → $Target"
         git clone --depth 1 $RepoUrl $Target
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        Ok 'cloned'
     }
     $Root = $Target
 }
 
 Set-Location $Root
-Ok "project: $Root"
+Write-Host "project: $Root"
 
 Ensure-Git
 Ensure-Node
 Ensure-Python
 
-Step 'npm install (Node packages)...'
-Write-Host '    this may take a minute...'
-$npmLog = Join-Path $env:TEMP 'al-npm.log'
-npm install --no-fund --no-audit *> $npmLog
+Write-Host 'npm install...'
+npm install --no-fund --no-audit
 if ($LASTEXITCODE -ne 0) {
-    Write-Host 'ERROR: npm install failed — last lines:'
-    Get-Content $npmLog -Tail 30 -ErrorAction SilentlyContinue
+    Write-Host 'ERROR: npm install failed'
     exit $LASTEXITCODE
 }
-Ok 'npm packages'
 
-Step 'Python venv + pip + TTS models...'
-Write-Host '    (torch / Silero — first time can take several minutes)'
-Write-Host '    please wait, progress appears below...'
-$setupLog = Join-Path $env:TEMP 'al-setup.log'
-# show setup output live (not silent) so user sees activity
-npm run setup 2>&1 | Tee-Object -FilePath $setupLog
+Write-Host 'Python venv + pip + TTS models (first time can take several minutes)...'
+npm run setup
 if ($LASTEXITCODE -ne 0) {
-    Write-Host 'ERROR: setup failed — last lines:'
-    Get-Content $setupLog -Tail 40 -ErrorAction SilentlyContinue
+    Write-Host 'ERROR: setup failed'
     exit $LASTEXITCODE
 }
-Ok 'python + models'
 
 Write-Host ''
-Write-Host '  ---------------------------------'
-Write-Host '  Installation complete'
-Write-Host "  Path:   $Root"
-Write-Host "  Start:  cd `"$Root`"; npm start"
-Write-Host '  Open:   http://localhost:3000'
-Write-Host '  ---------------------------------'
+Write-Host 'Installation complete'
+Write-Host "Path:  $Root"
+Write-Host "Start: cd `"$Root`"; npm start"
+Write-Host 'Open:  http://localhost:3000'
 Write-Host ''

@@ -26,12 +26,129 @@ let sleepCountdownId = null;
 let pageCache = new Map(); 
 
 function setPlayIcon(playing) {
-  const btn = $("#btnTtsPlay");
-  if (!btn) return;
   const href = playing ? "#i-pause" : "#i-play";
-  btn.innerHTML = `<svg class="icon icon-play"><use href="${href}"/></svg>`;
-  btn.title = playing ? "Пауза" : "Слушать";
-  btn.setAttribute("aria-label", playing ? "Пауза" : "Слушать");
+  const title = playing ? "Пауза" : "Слушать";
+  ["#btnTtsPlay", "#btnBarTtsPlay"].forEach((sel) => {
+    const btn = $(sel);
+    if (!btn) return;
+    btn.innerHTML = `<svg class="icon icon-play"><use href="${href}"/></svg>`;
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
+  });
+}
+
+function updateReaderBarTts() {
+  const bar = $("#readerBarTts");
+  if (!bar) return;
+  const active = !ttsStopped;
+  bar.classList.toggle("hidden", !active);
+  if (active) startWaveform();
+  else stopWaveform();
+}
+
+let waveCtx = null;
+let waveAnalyser = null;
+let waveSource = null;
+let waveData = null;
+let waveRaf = 0;
+let waveAudioCtx = null;
+
+function ensureWaveAnalyser() {
+  const audio = $("#ttsAudio");
+  if (!audio) return null;
+  try {
+    if (!waveAudioCtx) {
+      waveAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (!waveSource) {
+      waveSource = waveAudioCtx.createMediaElementSource(audio);
+      waveAnalyser = waveAudioCtx.createAnalyser();
+      waveAnalyser.fftSize = 128;
+      waveAnalyser.smoothingTimeConstant = 0.75;
+      waveSource.connect(waveAnalyser);
+      waveAnalyser.connect(waveAudioCtx.destination);
+      waveData = new Uint8Array(waveAnalyser.frequencyBinCount);
+    }
+    if (waveAudioCtx.state === "suspended") waveAudioCtx.resume().catch(() => {});
+    return waveAnalyser;
+  } catch (_) {
+    return null;
+  }
+}
+
+function startWaveform() {
+  const canvas = $("#readerBarWave");
+  if (!canvas) return;
+  const analyser = ensureWaveAnalyser();
+  if (!analyser || !waveData) {
+    drawWaveIdle(canvas);
+    return;
+  }
+  if (waveRaf) cancelAnimationFrame(waveRaf);
+  const ctx = canvas.getContext("2d");
+  const bars = 32;
+  const draw = () => {
+    waveRaf = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(waveData);
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const gap = 2;
+    const barW = Math.max(2, (w - gap * (bars - 1)) / bars);
+    const step = Math.floor(waveData.length / bars);
+    const playing = ttsAudio && !ttsAudio.paused && !ttsStopped;
+    for (let i = 0; i < bars; i++) {
+      let v = 0;
+      const base = i * step;
+      for (let j = 0; j < step; j++) v += waveData[base + j] || 0;
+      v = v / step / 255;
+      if (!playing) v = 0.12 + Math.sin(Date.now() / 400 + i * 0.4) * 0.04;
+      const bh = Math.max(2, v * (h - 4));
+      const x = i * (barW + gap);
+      const y = (h - bh) / 2;
+      ctx.fillStyle = getComputedStyle(document.documentElement)
+        .getPropertyValue("--accent")
+        .trim() || "#0a84ff";
+      ctx.globalAlpha = 0.35 + v * 0.65;
+      ctx.fillRect(x, y, barW, bh);
+    }
+    ctx.globalAlpha = 1;
+  };
+  draw();
+}
+
+function drawWaveIdle(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const bars = 32;
+  const gap = 2;
+  const barW = Math.max(2, (w - gap * (bars - 1)) / bars);
+  ctx.fillStyle = getComputedStyle(document.documentElement)
+    .getPropertyValue("--text3")
+    .trim() || "#888";
+  ctx.globalAlpha = 0.35;
+  for (let i = 0; i < bars; i++) {
+    const bh = 4 + (i % 5) * 2;
+    const x = i * (barW + gap);
+    const y = (h - bh) / 2;
+    ctx.fillRect(x, y, barW, bh);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function stopWaveform() {
+  if (waveRaf) {
+    cancelAnimationFrame(waveRaf);
+    waveRaf = 0;
+  }
+  const canvas = $("#readerBarWave");
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 function updateMediaSession(state) {
@@ -148,14 +265,13 @@ function loadSettings() {
   try {
     const s = JSON.parse((localStorage.getItem("al_settings") || localStorage.getItem("sr_settings")) || "{}");
     
-    if (s.layoutMode === "spread" || s.layoutMode === "page") s.layoutMode = "pages";
-    if (!s.layoutMode) s.layoutMode = "pages";
+    s.layoutMode = "spread";
     if (!s.theme) s.theme = "sepia";
     if (!s.pageIndicatorMode) s.pageIndicatorMode = "total";
     if (s.volume == null) s.volume = 1;
     return s;
   } catch {
-    return { layoutMode: "pages", theme: "sepia", pageIndicatorMode: "total", volume: 1 };
+    return { layoutMode: "spread", theme: "sepia", pageIndicatorMode: "total", volume: 1 };
   }
 }
 
@@ -193,6 +309,7 @@ function applySettings() {
     if (width === "wide") content.classList.add("width-wide");
   }
 
+  chapterUnitsCache.clear();
   pageCache.clear();
   applyLayoutMode();
 
@@ -206,11 +323,6 @@ function applySettings() {
   }
   if ($("#themeSelect")) $("#themeSelect").value = theme;
   if ($("#contentWidth")) $("#contentWidth").value = width;
-  if ($("#layoutMode")) {
-    let lm = settings.layoutMode || "pages";
-    if (lm === "spread" || lm === "page") lm = "pages";
-    $("#layoutMode").value = lm;
-  }
   if ($("#pageIndicatorMode")) $("#pageIndicatorMode").value = settings.pageIndicatorMode || "total";
   if (typeof updateThemeSwatches === "function") updateThemeSwatches();
 
@@ -597,21 +709,20 @@ function escapeHtml(str) {
 }
 
 let pageMetrics = {
-  mode: "scroll",
+  mode: "pages",
   pageIndex: 0,
   pageCount: 1,
   pages: [],
   chapterIndex: 0,
 };
 
-function pageCacheKey(chIndex, mode, w, h, fontSize, lineHeight) {
-  return [currentBook?.id, chIndex, mode, w, h, fontSize, lineHeight].join("|");
-}
+let pageCursor = { ch: 0, u: 0 };
+let pageNextCursor = null;
+let pageHistory = [];
+let chapterUnitsCache = new Map();
 
 function getLayoutMode() {
-  let m = settings.layoutMode || "pages";
-  if (m === "spread" || m === "page") m = "pages";
-  return m;
+  return "pages";
 }
 
 function isTtsActivelyPlaying() {
@@ -619,89 +730,129 @@ function isTtsActivelyPlaying() {
 }
 
 function canTurnPages() {
-  return pageMetrics.mode !== "scroll" && !isTtsActivelyPlaying();
+  return !isTtsActivelyPlaying();
 }
 
 function getPagePadding() {
-  return { x: 28, y: 24, gap: 24 };
+  return { x: 40, y: 28, bottom: 28, gap: 28 };
+}
+
+function useSpread() {
+  return window.innerWidth >= 900;
+}
+
+function resetPageCursors(ch, u) {
+  pageCursor = { ch: ch || 0, u: u || 0 };
+  pageNextCursor = null;
+  pageHistory = [];
+  pageMetrics.pageIndex = 0;
 }
 
 function applyLayoutMode() {
-  
-
   const content = $("#readerContent");
   const view = $("#readerView");
   const wrap = document.querySelector(".reader-view-wrap");
   if (!content) return;
 
-  const mode = getLayoutMode(); 
-  const effective = mode === "pages" ? "pages" : "scroll";
-
+  const spread = useSpread();
   content.classList.remove("layout-scroll", "layout-page", "layout-spread", "layout-pages");
-  content.classList.add("layout-" + effective);
-  view?.classList.toggle("paged", effective === "pages");
-  wrap?.classList.toggle("paged", effective === "pages");
-  pageMetrics.mode = effective;
+  content.classList.add(spread ? "layout-spread" : "layout-pages");
+  view?.classList.toggle("paged", true);
+  wrap?.classList.toggle("paged", true);
+  pageMetrics.mode = "pages";
   content.style.cssText = "";
 
-  if (effective === "scroll") {
-    pageMetrics.pageIndex = 0;
-    pageMetrics.pageCount = 1;
-    pageMetrics.pages = [];
-    if (currentBook) renderScrollContent();
-    updatePageIndicator();
-    bindPagedNavigation();
-    return;
-  }
-
-  
-  pageMetrics.chapterIndex = currentChapterIndex || 0;
   buildChapterPages(true);
   bindPagedNavigation();
 }
 
-function buildFullBookHtml() {
-  if (!currentBook) return "";
-  return currentBook.chapters
-    .map(
-      (ch, i) => `
-    <div class="chapter" data-index="${i}">
-      <div class="chapter-title">${escapeHtml(ch.title)}</div>
-      <div class="chapter-body">${formatChapterText(ch.text, i)}</div>
-    </div>`
-    )
-    .join("");
-}
-
-function renderScrollContent() {
-  const content = $("#readerContent");
-  if (!content || !currentBook) return;
-  content.innerHTML = buildFullBookHtml();
-  bindSentenceEvents();
+function normHeading(s) {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .replace(/[«»"„“”]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 function chapterUnits(chIndex) {
+  if (chapterUnitsCache.has(chIndex)) return chapterUnitsCache.get(chIndex);
   const ch = currentBook?.chapters?.[chIndex];
   if (!ch) return [];
-  const units = [
-    { type: "title", html: `<div class="chapter-title">${escapeHtml(ch.title)}</div>` },
-  ];
+  const titleNorm = normHeading(ch.title);
+  const units = [];
+  if (ch.title && String(ch.title).trim()) {
+    units.push({
+      type: "title",
+      ch: chIndex,
+      html: `<div class="chapter-title" data-ch="${chIndex}">${escapeHtml(ch.title)}</div>`,
+    });
+  }
   let si = 0;
   const paragraphs = (ch.text || "").split(/\n{2,}/);
   paragraphs.forEach((p) => {
     p = p.trim();
     if (!p) return;
+    if (titleNorm && normHeading(p) === titleNorm) return;
     const sentences = splitSentences(p);
-    sentences.forEach((s, sj) => {
+    let added = 0;
+    sentences.forEach((s) => {
+      if (titleNorm && normHeading(s) === titleNorm) return;
       units.push({
         type: "sentence",
+        ch: chIndex,
+        si,
+        text: s,
         html: `<span class="sentence" data-ch="${chIndex}" data-si="${si}">${escapeHtml(s)}</span>`,
       });
       si++;
+      added++;
     });
-    if (sentences.length) units.push({ type: "para-break" });
+    if (added) units.push({ type: "para-break", ch: chIndex });
   });
+  chapterUnitsCache.set(chIndex, units);
   return units;
+}
+
+function collectUnitsFrom(ch, u, limit) {
+  const out = [];
+  const nCh = currentBook?.chapters?.length || 0;
+  let c = Math.max(0, ch || 0);
+  let i = Math.max(0, u || 0);
+  while (out.length < limit && c < nCh) {
+    const units = chapterUnits(c);
+    if (!units.length) {
+      c++;
+      i = 0;
+      continue;
+    }
+    if (i >= units.length) {
+      c++;
+      i = 0;
+      continue;
+    }
+    while (i < units.length && out.length < limit) {
+      out.push({ unit: units[i], ch: c, u: i });
+      i++;
+    }
+    if (i >= units.length) {
+      c++;
+      i = 0;
+    }
+  }
+  return out;
+}
+
+function advanceCursor(ch, u) {
+  const nCh = currentBook?.chapters?.length || 0;
+  let c = ch;
+  let i = u + 1;
+  while (c < nCh) {
+    const units = chapterUnits(c);
+    if (i < units.length) return { ch: c, u: i };
+    c++;
+    i = 0;
+  }
+  return null;
 }
 
 function unitsToHtml(list) {
@@ -731,8 +882,20 @@ function unitsToHtml(list) {
   return html;
 }
 
-function paginateUnits(units, pageW, pageH) {
-  if (!units.length) return ["<p></p>"];
+function packPageFromCursor(cursor, pageW, pageH) {
+  const batch = collectUnitsFrom(cursor.ch, cursor.u, 600);
+  if (!batch.length) {
+    return { html: "<p></p>", next: null, chapterIndex: cursor.ch || 0 };
+  }
+  if (pageW < 80 || pageH < 80) {
+    const units = batch.map((b) => b.unit);
+    const last = batch[batch.length - 1];
+    return {
+      html: unitsToHtml(units),
+      next: advanceCursor(last.ch, last.u),
+      chapterIndex: batch[0].ch,
+    };
+  }
 
   const measure = document.createElement("div");
   measure.className = "page-measure page-panel";
@@ -742,130 +905,115 @@ function paginateUnits(units, pageW, pageH) {
     "top:0",
     "visibility:hidden",
     "pointer-events:none",
-    `width:${pageW}px`,
-    `height:${pageH}px`,
+    `width:${Math.floor(pageW)}px`,
+    `height:${Math.floor(pageH)}px`,
     "overflow:hidden",
     "box-sizing:border-box",
+    "margin:0",
+    "padding:0",
     `font-size:${settings.fontSize || 18}px`,
     `line-height:${settings.lineHeight || 1.65}`,
+    'font-family:var(--font-read, Georgia, "Times New Roman", serif)',
   ].join(";");
   document.body.appendChild(measure);
 
-  const fitsRange = (from, to) => {
-    measure.innerHTML = unitsToHtml(units.slice(from, to));
-    return measure.scrollHeight <= measure.clientHeight + 2;
+  const units = batch.map((b) => b.unit);
+  const fits = (to) => {
+    measure.innerHTML = unitsToHtml(units.slice(0, to));
+    void measure.offsetHeight;
+    return measure.scrollHeight <= measure.clientHeight + 1;
   };
 
-  const pages = [];
-  let start = 0;
-  const n = units.length;
+  let best = 1;
+  if (!fits(1)) {
+    measure.remove();
+    const last = batch[0];
+    return {
+      html: unitsToHtml(units.slice(0, 1)),
+      next: advanceCursor(last.ch, last.u),
+      chapterIndex: last.ch,
+    };
+  }
 
-  while (start < n) {
-    
-    while (start < n && units[start].type === "para-break") start++;
-    if (start >= n) break;
-
-    
-    let lo = start + 1;
-    let hi = n;
-    let best = start + 1;
-    
-    if (!fitsRange(start, start + 1)) {
-      pages.push(unitsToHtml(units.slice(start, start + 1)));
-      start = start + 1;
-      continue;
+  let lo = 1;
+  let hi = units.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(mid)) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
     }
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (fitsRange(start, mid)) {
-        best = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    pages.push(unitsToHtml(units.slice(start, best)));
-    start = best;
   }
 
   measure.remove();
-  return pages.length ? pages : ["<p></p>"];
+  const last = batch[best - 1];
+  return {
+    html: unitsToHtml(units.slice(0, best)),
+    next: advanceCursor(last.ch, last.u),
+    chapterIndex: batch[0].ch,
+  };
 }
 
 function buildChapterPages(keepPage) {
   const wrap = document.querySelector(".reader-view-wrap");
-  if (!wrap || !currentBook || pageMetrics.mode === "scroll") return;
-
-  const chIndex = currentChapterIndex || 0;
-  pageMetrics.chapterIndex = chIndex;
+  if (!wrap || !currentBook) return;
 
   const pad = getPagePadding();
   const wrapW = wrap.clientWidth;
   const wrapH = wrap.clientHeight;
   if (wrapW < 60 || wrapH < 60) return;
 
-  
-  const isSpread = pageMetrics.mode === "pages" && window.innerWidth >= 700;
-  const pageW = isSpread
+  const spread = useSpread();
+  const pageW = spread
     ? Math.floor((wrapW - pad.x * 2 - pad.gap) / 2)
     : wrapW - pad.x * 2;
-  const pageH = wrapH - pad.y * 2;
+  const pageH = wrapH - pad.y - pad.bottom;
 
-  const fontSize = settings.fontSize || 18;
-  const lineHeight = settings.lineHeight || 1.65;
-  const key = pageCacheKey(chIndex, pageMetrics.mode, pageW, pageH, fontSize, lineHeight);
-
-  let pages = pageCache.get(key);
-  if (!pages) {
-    const units = chapterUnits(chIndex);
-    pages = paginateUnits(units, pageW, pageH);
-    pageCache.set(key, pages);
-    
-    if (pageCache.size > 40) {
-      const first = pageCache.keys().next().value;
-      pageCache.delete(first);
-    }
+  if (!keepPage) {
+    resetPageCursors(currentChapterIndex || 0, 0);
+  } else if (!pageHistory.length && pageCursor.ch === 0 && pageCursor.u === 0) {
+    resetPageCursors(currentChapterIndex || 0, 0);
   }
 
-  pageMetrics.pages = pages;
-  const perScreen = (pageMetrics.mode === "pages" && window.innerWidth >= 700) ? 2 : 1;
-  pageMetrics.pageCount = Math.max(1, Math.ceil(pages.length / perScreen));
-
-  if (!keepPage) pageMetrics.pageIndex = 0;
-  
-  if (keepPage && typeof currentBook.charOffset === "number") {
-    pageMetrics.pageIndex = currentBook.charOffset || 0;
+  const left = packPageFromCursor(pageCursor, pageW, pageH);
+  let rightHtml = "";
+  let next = left.next;
+  if (spread && left.next) {
+    const right = packPageFromCursor(left.next, pageW, pageH);
+    rightHtml = right.html;
+    next = right.next;
   }
-  pageMetrics.pageIndex = Math.max(
-    0,
-    Math.min(pageMetrics.pageCount - 1, pageMetrics.pageIndex || 0)
-  );
+  pageNextCursor = next;
+  currentChapterIndex = left.chapterIndex;
+  pageMetrics.chapterIndex = left.chapterIndex;
+  pageMetrics.pages = spread ? [left.html, rightHtml] : [left.html];
+  pageMetrics.pageCount = Math.max(1, estimateBookPages(currentBook));
+  pageMetrics.mode = "pages";
 
   renderCurrentScreen();
 }
 
 function renderCurrentScreen() {
   const content = $("#readerContent");
-  if (!content || pageMetrics.mode === "scroll") return;
+  if (!content) return;
 
-  const isSpread = pageMetrics.mode === "pages" && window.innerWidth >= 700;
-  const perScreen = isSpread ? 2 : 1;
-  const start = pageMetrics.pageIndex * perScreen;
   const pad = getPagePadding();
+  const spread = useSpread() && pageMetrics.pages.length > 1;
+  const left = pageMetrics.pages[0] || "";
+  const right = pageMetrics.pages[1] || "";
 
-  if (isSpread) {
-    const left = pageMetrics.pages[start] || "";
-    const right = pageMetrics.pages[start + 1] || "";
+  if (spread) {
     content.innerHTML = `
-      <div class="spread-row" style="gap:${pad.gap}px;padding:${pad.y}px ${pad.x}px;">
+      <div class="spread-row" style="gap:${pad.gap}px;padding:${pad.y}px ${pad.x}px ${pad.bottom}px;">
         <div class="page-panel">${left}</div>
         <div class="page-panel">${right}</div>
       </div>`;
   } else {
-    const html = pageMetrics.pages[start] || "";
     content.innerHTML = `
-      <div class="page-panel single" style="padding:${pad.y}px ${pad.x}px;">
-        ${html}
+      <div class="page-panel single" style="padding:${pad.y}px ${pad.x}px ${pad.bottom}px;">
+        ${left}
       </div>`;
   }
 
@@ -875,37 +1023,41 @@ function renderCurrentScreen() {
 }
 
 function turnPage(dir) {
-  if (pageMetrics.mode === "scroll") return;
   if (!canTurnPages()) return;
+  if (!currentBook) return;
 
-  const next = pageMetrics.pageIndex + dir;
-  if (next >= 0 && next < pageMetrics.pageCount) {
-    pageMetrics.pageIndex = next;
-    renderCurrentScreen();
+  if (dir > 0) {
+    if (!pageNextCursor) return;
+    pageHistory.push({ ch: pageCursor.ch, u: pageCursor.u });
+    pageCursor = { ch: pageNextCursor.ch, u: pageNextCursor.u };
+    pageMetrics.pageIndex = (pageMetrics.pageIndex || 0) + 1;
+    buildChapterPages(true);
     return;
   }
 
-  
-  if (dir > 0 && currentChapterIndex < (currentBook?.chapters?.length || 1) - 1) {
-    currentChapterIndex += 1;
-    pageMetrics.pageIndex = 0;
-    buildChapterPages(false);
-    return;
-  }
-  if (dir < 0 && currentChapterIndex > 0) {
-    currentChapterIndex -= 1;
-    pageMetrics.pageIndex = 0;
-    buildChapterPages(false);
-    
-    pageMetrics.pageIndex = Math.max(0, pageMetrics.pageCount - 1);
-    renderCurrentScreen();
+  if (dir < 0) {
+    if (!pageHistory.length) return;
+    pageCursor = pageHistory.pop();
+    pageMetrics.pageIndex = Math.max(0, (pageMetrics.pageIndex || 0) - 1);
+    buildChapterPages(true);
   }
 }
 
 function goToPage(index) {
-  if (pageMetrics.mode === "scroll") return;
-  pageMetrics.pageIndex = Math.max(0, Math.min(pageMetrics.pageCount - 1, index));
-  renderCurrentScreen();
+  if (!currentBook) return;
+  index = Math.max(0, index || 0);
+  resetPageCursors(0, 0);
+  pageMetrics.pageIndex = 0;
+  buildChapterPages(true);
+  let guard = 0;
+  while (pageMetrics.pageIndex < index && pageNextCursor && guard < index + 2) {
+    pageHistory.push({ ch: pageCursor.ch, u: pageCursor.u });
+    pageCursor = { ch: pageNextCursor.ch, u: pageNextCursor.u };
+    pageMetrics.pageIndex++;
+    buildChapterPages(true);
+    guard++;
+    if (!pageNextCursor) break;
+  }
 }
 
 function estimateCharsPerPage() {
@@ -936,21 +1088,28 @@ function estimateGlobalPage() {
 
 function updatePageIndicator() {
   const el = $("#pageIndicator");
-  if (!el) return;
-  if (pageMetrics.mode === "scroll") {
-    el.textContent = "";
-    return;
+  if (el) {
+    const mode = settings.pageIndicatorMode || "total";
+    if (mode === "chapter") {
+      const ch = (currentChapterIndex || 0) + 1;
+      const chTotal = currentBook?.chapters?.length || 1;
+      el.textContent = `гл. ${ch}/${chTotal}`;
+    } else {
+      const total = estimateBookPages(currentBook);
+      const cur = Math.min(total, (pageMetrics.pageIndex || 0) + 1);
+      el.textContent = `${cur} / ${total}`;
+    }
   }
-  const mode = settings.pageIndicatorMode || "total";
-  if (mode === "chapter") {
-    const ch = (currentChapterIndex || 0) + 1;
-    const chTotal = currentBook?.chapters?.length || 1;
-    el.textContent = `гл. ${ch}/${chTotal} · ${pageMetrics.pageIndex + 1}/${pageMetrics.pageCount}`;
-  } else {
-    const total = estimateBookPages(currentBook);
-    const cur = Math.min(total, estimateGlobalPage());
-    el.textContent = `${cur} / ${total}`;
+  const chEl = $("#readerBarChapter");
+  if (chEl) {
+    const title =
+      currentBook?.chapters?.[currentChapterIndex || 0]?.title ||
+      currentBook?.title ||
+      "";
+    chEl.textContent = title;
+    chEl.title = title;
   }
+  updateReaderBarTts();
 }
 
 let pageWheelLock = 0;
@@ -964,8 +1123,7 @@ function bindPagedNavigation() {
   wrap.addEventListener(
     "wheel",
     (e) => {
-      if (pageMetrics.mode === "scroll") return;
-      e.preventDefault();
+            e.preventDefault();
       if (!canTurnPages()) return;
       const now = Date.now();
       if (now - pageWheelLock < 280) return;
@@ -981,8 +1139,7 @@ function bindPagedNavigation() {
   wrap.addEventListener(
     "touchstart",
     (e) => {
-      if (pageMetrics.mode === "scroll") return;
-      const t = e.changedTouches[0];
+            const t = e.changedTouches[0];
       pageTouch = { x: t.clientX, y: t.clientY };
     },
     { passive: true }
@@ -991,8 +1148,7 @@ function bindPagedNavigation() {
   wrap.addEventListener(
     "touchmove",
     (e) => {
-      if (pageMetrics.mode === "scroll") return;
-      e.preventDefault();
+            e.preventDefault();
     },
     { passive: false }
   );
@@ -1000,8 +1156,7 @@ function bindPagedNavigation() {
   wrap.addEventListener(
     "touchend",
     (e) => {
-      if (pageMetrics.mode === "scroll") return;
-      if (!pageTouch) return;
+            if (!pageTouch) return;
       if (!canTurnPages()) {
         pageTouch = null;
         return;
@@ -1044,7 +1199,22 @@ async function openBook(id) {
   try {
     stopTts(false);
     currentBook = await api("/api/books/" + id);
-    currentChapterIndex = currentBook.chapterIndex || 0;
+    chapterUnitsCache.clear();
+    pageCache.clear();
+
+    const ch = Math.max(
+      0,
+      Math.min(
+        (currentBook.chapters?.length || 1) - 1,
+        currentBook.chapterIndex || 0
+      )
+    );
+    currentChapterIndex = ch;
+    const units = chapterUnits(ch);
+    let u = Number(currentBook.charOffset) || 0;
+    if (u < 0) u = 0;
+    if (units.length && u >= units.length) u = Math.max(0, units.length - 1);
+    resetPageCursors(ch, u);
 
     $("#libraryView").classList.add("hidden");
     $("#bookDetailView").classList.add("hidden");
@@ -1055,8 +1225,6 @@ async function openBook(id) {
 
     bindReaderHeaderAutoHide();
     setHeaderHidden(false);
-    currentChapterIndex = currentBook.chapterIndex || 0;
-    pageMetrics.pageIndex = currentBook.charOffset || 0;
     applyLayoutMode();
     updatePageIndicator();
   } catch (err) {
@@ -1089,23 +1257,13 @@ function formatChapterText(text, chapterIndex) {
 
 function renderChapters() {
   if (!currentBook) return;
-  if (pageMetrics.mode === "scroll") {
-    renderScrollContent();
-  } else {
-    buildChapterPages(false);
-  }
+  buildChapterPages(false);
 }
 
 function scrollToChapter(index, smooth = true) {
   currentChapterIndex = index;
-  if (pageMetrics.mode === "scroll") {
-    const el = document.querySelector(`.chapter[data-index="${index}"]`);
-    if (el) el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
-    saveProgressDebounced();
-    return;
-  }
-  pageMetrics.pageIndex = 0;
-  buildChapterPages(false);
+  resetPageCursors(index, 0);
+  buildChapterPages(true);
   saveProgressDebounced();
 }
 
@@ -1129,63 +1287,54 @@ function splitChapterIntoSentences(chapterText) {
 }
 
 function collectSentencesFromChapter(chapterIndex) {
-  const ch = currentBook?.chapters?.[chapterIndex];
-  if (!ch) return [];
-  return splitChapterIntoSentences(ch.text || "").map((t, si) => ({
-    ch: chapterIndex,
-    si,
-    text: t,
-  }));
+  return chapterUnits(chapterIndex)
+    .filter((u) => u.type === "sentence" && u.text)
+    .map((u) => ({
+      ch: chapterIndex,
+      si: u.si,
+      text: u.text,
+    }));
+}
+
+function normSentenceText(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
 }
 
 function collectFromPick(ch, si, clickedText) {
   const all = collectSentencesFromChapter(ch);
   if (!all.length) return [];
 
-  const want = (clickedText || "").replace(/\s+/g, " ").trim();
-  let start = -1;
+  const want = normSentenceText(clickedText);
+  let start = all.findIndex((s) => s.si === si);
 
-  if (want) {
-    
-    if (all[si] && all[si].text.replace(/\s+/g, " ").trim() === want) {
-      start = si;
-    } else {
-      
-      const from = Math.max(0, si - 2);
-      const to = Math.min(all.length, si + 5);
-      for (let i = from; i < to; i++) {
-        if (all[i].text.replace(/\s+/g, " ").trim() === want) {
-          start = i;
-          break;
-        }
-      }
-      
-      if (start < 0) {
-        start = all.findIndex(
-          (s) => s.text.replace(/\s+/g, " ").trim() === want
-        );
-      }
-      
-      if (start < 0) {
-        start = all.findIndex((s) => {
-          const t = s.text.replace(/\s+/g, " ").trim();
-          return t.startsWith(want) || want.startsWith(t);
-        });
-      }
+  if (start >= 0 && want) {
+    const got = normSentenceText(all[start].text);
+    if (got !== want && !got.startsWith(want) && !want.startsWith(got)) {
+      start = -1;
     }
   }
 
-  if (start < 0) start = Math.max(0, Math.min(all.length - 1, Number(si) || 0));
+  if (start < 0 && want) {
+    start = all.findIndex((s) => normSentenceText(s.text) === want);
+  }
+  if (start < 0 && want) {
+    start = all.findIndex((s) => {
+      const t = normSentenceText(s.text);
+      return t.startsWith(want) || want.startsWith(t);
+    });
+  }
+  if (start < 0) {
+    start = all.findIndex((s) => s.si === si);
+  }
+  if (start < 0) start = 0;
   return all.slice(start);
 }
 
 function bindSentenceEvents() {
   const content = $("#readerContent");
-
-  const canPick = () => ttsPanelOpen || !ttsStopped;
+  if (!content) return;
 
   content.onmouseover = (e) => {
-    if (!canPick()) return;
     const s = e.target.closest(".sentence");
     content.querySelectorAll(".sentence.hover").forEach((el) => {
       if (el !== s) el.classList.remove("hover");
@@ -1198,27 +1347,29 @@ function bindSentenceEvents() {
     if (s) s.classList.remove("hover");
   };
 
-  
-  
   content.onclick = (e) => {
-    if (!canPick()) return;
     const s = e.target.closest(".sentence");
     if (!s) return;
     e.stopPropagation();
+    try {
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+    } catch (_) {}
 
     const ch = Number(s.dataset.ch);
     const si = Number(s.dataset.si);
     if (!Number.isFinite(ch) || !Number.isFinite(si)) return;
-    const clickedText = (s.textContent || "").replace(/\s+/g, " ").trim();
+    const clickedText = normSentenceText(s.textContent);
     ttsPicked = { ch, si, text: clickedText };
 
-    content.querySelectorAll(".sentence.picked").forEach((el) => el.classList.remove("picked"));
-    s.classList.add("picked");
+    $$(".sentence.picked, .sentence.hover, .sentence.active").forEach((el) => {
+      el.classList.remove("picked", "hover", "active");
+    });
+    s.classList.add("active");
 
     startTtsFromPick();
   };
 
-  
   content.oncontextmenu = null;
 }
 
@@ -1231,32 +1382,23 @@ function saveProgressDebounced() {
 
 async function saveProgress() {
   if (!currentBook) return;
-  const total = currentBook.chapters.length || 1;
-  let progress;
-  if (pageMetrics.mode !== "scroll" && pageMetrics.pageCount > 0) {
-    const chapterFrac =
-      (pageMetrics.pageIndex + 1) / Math.max(1, pageMetrics.pageCount);
-    progress = Math.round(
-      ((currentChapterIndex + chapterFrac) / total) * 100
-    );
-  } else {
-    progress = Math.round(((currentChapterIndex + 0.5) / total) * 100);
-  }
+  const totalCh = Math.max(1, currentBook.chapters?.length || 1);
+  const ch = Number.isFinite(pageCursor?.ch) ? pageCursor.ch : currentChapterIndex || 0;
+  const u = Number.isFinite(pageCursor?.u) ? pageCursor.u : 0;
+  let progress = Math.round(((ch + 0.5) / totalCh) * 100);
   progress = Math.min(100, Math.max(0, progress));
-  const pageIdx =
-    pageMetrics.mode !== "scroll" ? pageMetrics.pageIndex || 0 : 0;
   try {
     await api("/api/books/" + currentBook.id + "/progress", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chapterIndex: currentChapterIndex,
-        charOffset: pageIdx, 
+        chapterIndex: ch,
+        charOffset: u,
         progress,
       }),
     });
-    currentBook.chapterIndex = currentChapterIndex;
-    currentBook.charOffset = pageIdx;
+    currentBook.chapterIndex = ch;
+    currentBook.charOffset = u;
     currentBook.progress = progress;
   } catch (_) {}
 }
@@ -1433,13 +1575,6 @@ $("#contentWidth").addEventListener("change", (e) => {
   saveSettings();
 });
 
-$("#layoutMode")?.addEventListener("change", (e) => {
-  settings.layoutMode = e.target.value;
-  saveSettings();
-  pageCache.clear();
-  applyLayoutMode();
-});
-
 $("#pageIndicatorMode")?.addEventListener("change", (e) => {
   settings.pageIndicatorMode = e.target.value;
   saveSettings();
@@ -1526,8 +1661,7 @@ $("#ttsSpeaker").addEventListener("change", (e) => {
   if (!ttsStopped) restartTtsWithNewSettings();
 });
 
-$("#btnTtsPlay").addEventListener("click", () => {
-  
+function onTtsPlayClick() {
   const hasAudio = ttsAudio && ttsAudio.src && !ttsStopped && isSpeaking;
   if (hasAudio) {
     if (ttsAudio.paused) {
@@ -1544,18 +1678,21 @@ $("#btnTtsPlay").addEventListener("click", () => {
     return;
   }
 
-  
   if (!ttsStopped && !hasAudio) {
     ttsStopped = true;
     isSpeaking = false;
+    updateReaderBarTts();
   }
 
   if (ttsPicked) startTtsFromPick();
   else startTtsFromCurrentChapter();
-});
+}
+
+$("#btnTtsPlay").addEventListener("click", onTtsPlayClick);
+$("#btnBarTtsPlay")?.addEventListener("click", onTtsPlayClick);
 
 let lastPrevClick = 0;
-$("#btnTtsPrev").addEventListener("click", () => {
+function onTtsPrevClick() {
   if (ttsStopped || !ttsSentences.length) return;
   const nearStart = ttsPos <= 0;
   if (nearStart) {
@@ -1564,7 +1701,6 @@ $("#btnTtsPrev").addEventListener("click", () => {
         ? ttsSentences[0].ch
         : currentChapterIndex;
     if (ch > 0) {
-      const gen = ttsGeneration;
       advanceToChapter(ch - 1, true);
       return;
     }
@@ -1573,9 +1709,9 @@ $("#btnTtsPrev").addEventListener("click", () => {
   }
   const target = Math.max(0, ttsPos - 1);
   jumpToQueueIndex(target);
-});
+}
 
-$("#btnTtsNext").addEventListener("click", () => {
+function onTtsNextClick() {
   if (ttsStopped) {
     if (ttsPicked) startTtsFromPick();
     else startTtsFromCurrentChapter();
@@ -1592,7 +1728,12 @@ $("#btnTtsNext").addEventListener("click", () => {
     return;
   }
   jumpToQueueIndex(ttsPos + 1);
-});
+}
+
+$("#btnTtsPrev").addEventListener("click", onTtsPrevClick);
+$("#btnBarTtsPrev")?.addEventListener("click", onTtsPrevClick);
+$("#btnTtsNext").addEventListener("click", onTtsNextClick);
+$("#btnBarTtsNext")?.addEventListener("click", onTtsNextClick);
 
 function restartCurrentSentence() {
   if (!ttsSentences.length || ttsStopped) return;
@@ -1618,56 +1759,60 @@ function findPageIndexForSentence(ch, si) {
   return -1;
 }
 
+function findUnitIndexForSentence(ch, si) {
+  const units = chapterUnits(ch);
+  for (let i = 0; i < units.length; i++) {
+    if (
+      units[i].type === "sentence" &&
+      units[i].html.includes(`data-ch="${ch}"`) &&
+      units[i].html.includes(`data-si="${si}"`)
+    ) {
+      return i;
+    }
+  }
+  return 0;
+}
+
 function ensureSentencePageVisible(ch, si) {
-  if (pageMetrics.mode === "scroll") return;
   if (document.querySelector(`.sentence[data-ch="${ch}"][data-si="${si}"]`)) return;
-  if (pageMetrics.chapterIndex !== ch && currentChapterIndex !== ch) {
-    currentChapterIndex = ch;
-    pageMetrics.pageIndex = 0;
-    buildChapterPages(true);
-  }
-  const pageIdx = findPageIndexForSentence(ch, si);
-  if (pageIdx < 0) return;
-  const perScreen =
-    pageMetrics.mode === "pages" && window.innerWidth >= 700 ? 2 : 1;
-  const screen = Math.floor(pageIdx / perScreen);
-  if (screen !== pageMetrics.pageIndex) {
-    goToPage(screen);
-  }
+  currentChapterIndex = ch;
+  const u = findUnitIndexForSentence(ch, si);
+  pageHistory = [];
+  pageCursor = { ch, u };
+  pageMetrics.pageIndex = Math.max(0, pageMetrics.pageIndex || 0);
+  buildChapterPages(true);
 }
 
 function highlightSentence(ch, si) {
-  $$(".sentence.active").forEach((el) => el.classList.remove("active"));
-  if (pageMetrics.mode !== "scroll") {
-    ensureSentencePageVisible(ch, si);
+  if (ch == null || si == null) return;
+  const already = document.querySelector(
+    `.sentence.active[data-ch="${ch}"][data-si="${si}"]`
+  );
+  if (already) {
+    already.classList.remove("hover", "picked");
+    return;
   }
+  $$(".sentence.active, .sentence.picked, .sentence.hover").forEach((el) => {
+    el.classList.remove("active", "picked", "hover");
+  });
+  ensureSentencePageVisible(ch, si);
   const el = document.querySelector(`.sentence[data-ch="${ch}"][data-si="${si}"]`);
   if (el) {
     el.classList.add("active");
     el.classList.remove("hover", "picked");
-    scrollSentenceIntoView(el, true);
   }
 }
 
-function scrollSentenceIntoView(el, force = false) {
-  const container = $("#readerContent");
-  if (!container || !el) return;
-  
-  if (pageMetrics.mode !== "scroll") return;
-
-  const cRect = container.getBoundingClientRect();
-  const eRect = el.getBoundingClientRect();
-  const offset = 72;
-  const outOfView =
-    eRect.top < cRect.top + offset || eRect.bottom > cRect.bottom - 40;
-  if (force || outOfView) {
-    const target = container.scrollTop + (eRect.top - cRect.top) - offset;
-    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-  }
-}
+function scrollSentenceIntoView(el, force = false) {}
 
 function clearHighlight() {
-  $$(".sentence.active").forEach((el) => el.classList.remove("active"));
+  $$(".sentence.active, .sentence.picked, .sentence.hover").forEach((el) => {
+    el.classList.remove("active", "picked", "hover");
+  });
+  try {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  } catch (_) {}
 }
 
 function setScrollLock(on) {
@@ -1805,12 +1950,7 @@ function advanceToChapter(chIndex, fromEnd) {
   currentChapterIndex = chIndex;
   ttsPicked = null;
   try {
-    if (pageMetrics.mode === "scroll") {
-      scrollToChapter(chIndex, true);
-    } else {
-      pageMetrics.pageIndex = 0;
-      buildChapterPages(false);
-    }
+    scrollToChapter(chIndex, true);
   } catch (_) {}
   saveProgressDebounced();
   if (fromEnd) {
@@ -1852,8 +1992,8 @@ async function playAt(pos, gen) {
     return playAt(pos + 1, gen);
   }
 
-  highlightSentence(item.ch, item.si);
   currentChapterIndex = item.ch;
+  highlightSentence(item.ch, item.si);
   saveProgressDebounced();
 
   if (ttsStatus) ttsStatus.textContent = `${pos + 1} / ${ttsSentences.length}`;
@@ -1878,10 +2018,15 @@ async function playAt(pos, gen) {
     $("#btnTtsPlay").disabled = false;
     const msg = err.message || "Ошибка TTS";
     if (ttsStatus) ttsStatus.textContent = msg;
-    return playAt(pos + 1, gen);
+    if (typeof showToast === "function") showToast(msg, "error");
+    highlightSentence(item.ch, item.si);
+    isSpeaking = false;
+    setPlayIcon(false);
+    setScrollLock(false);
+    updateReaderBarTts();
+    return;
   }
 
-  
   highlightSentence(item.ch, item.si);
   prefetchNext(gen);
 
@@ -1895,7 +2040,14 @@ async function playAt(pos, gen) {
   };
   ttsAudio.onerror = () => {
     URL.revokeObjectURL(url);
-    if (!ttsStopped && gen === ttsGeneration) playAt(pos + 1, gen);
+    if (ttsStopped || gen !== ttsGeneration) return;
+    if (ttsStatus) ttsStatus.textContent = "Ошибка воспроизведения";
+    if (typeof showToast === "function") showToast("Ошибка воспроизведения", "error");
+    highlightSentence(item.ch, item.si);
+    isSpeaking = false;
+    setPlayIcon(false);
+    setScrollLock(false);
+    updateReaderBarTts();
   };
 
   try {
@@ -1953,6 +2105,7 @@ function beginQueue(sentences) {
   isSpeaking = false;
   document.body.classList.add("tts-pick-mode");
   setPlayIcon(true);
+  updateReaderBarTts();
   if (ttsStatus) ttsStatus.textContent = "Генерация…";
   setTimeout(() => {
     if (gen !== ttsGeneration || ttsStopped) return;
@@ -2003,14 +2156,8 @@ function startTtsFromPick() {
     startTtsFromCurrentChapter();
     return;
   }
-  
-  if (ttsPicked.text) {
-    const first = (list[0].text || "").replace(/\s+/g, " ").trim();
-    const want = ttsPicked.text.replace(/\s+/g, " ").trim();
-    if (first !== want && !first.startsWith(want) && !want.startsWith(first)) {
-      console.warn("[tts] pick mismatch", { want, first, si: ttsPicked.si });
-    }
-  }
+  currentChapterIndex = list[0].ch;
+  highlightSentence(list[0].ch, list[0].si);
   beginQueue(list);
 }
 
@@ -2162,14 +2309,15 @@ function finishTts() {
   setScrollLock(false);
   setPlayIcon(false);
   updateMediaSession("none");
+  updateReaderBarTts();
   $("#btnTtsPlay").disabled = false;
-    if (ttsStatus) ttsStatus.textContent = ttsPos >= ttsSentences.length - 1 ? "Готово" : "";
+  if (ttsStatus) ttsStatus.textContent = ttsPos >= ttsSentences.length - 1 ? "Готово" : "";
   clearHighlight();
   if (!ttsPanelOpen) document.body.classList.remove("tts-pick-mode");
 }
 
 function stopTts(updateUi = true) {
-  ttsGeneration++; 
+  ttsGeneration++;
   ttsStopped = true;
   isSpeaking = false;
   setScrollLock(false);
@@ -2182,8 +2330,9 @@ function stopTts(updateUi = true) {
 
   if (updateUi) {
     setPlayIcon(false);
+    updateReaderBarTts();
     $("#btnTtsPlay").disabled = false;
-        if (ttsStatus) ttsStatus.textContent = "";
+    if (ttsStatus) ttsStatus.textContent = "";
     clearHighlight();
     if (!ttsPanelOpen) document.body.classList.remove("tts-pick-mode");
   }

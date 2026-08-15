@@ -73,7 +73,6 @@ function ensureDir(dir) {
   if (!exists(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-/** Simple serial queue to avoid lost updates on concurrent library writes */
 let libraryChain = Promise.resolve();
 
 function withLibrary(fn) {
@@ -102,15 +101,12 @@ function saveLibrary(lib) {
   fs.renameSync(tmp, LIBRARY_FILE);
 }
 
-/** Decode multer originalname (often mojibake for non-ASCII) */
 function decodeOriginalName(name) {
   if (!name || typeof name !== "string") return "book";
   try {
-    // Browser sends UTF-8 filename; some stacks present it as latin1
     const fixed = Buffer.from(name, "latin1").toString("utf8");
     if (/[А-Яа-яЁё]/.test(fixed) && !/[А-Яа-яЁё]/.test(name)) return fixed;
     if (fixed.includes("\uFFFD")) return name;
-    // Prefer fixed if it looks more like a real filename
     if (/[\u0400-\u04FF]/.test(fixed)) return fixed;
   } catch (_) {}
   return name;
@@ -211,7 +207,7 @@ function parseFb2(content) {
   const chapters = [];
   let chapterIndex = 0;
 
-  function processSection(section, parentTitle = null) {
+  function processSection(section, parentTitle = null, prependText = "") {
     if (!section) return;
 
     let sectionTitle = parentTitle;
@@ -224,24 +220,35 @@ function parseFb2(content) {
     const hasNested = section.section && (Array.isArray(section.section) ? section.section.length > 0 : true);
 
     if (hasNested) {
-      // Own paragraphs before/around nested sections (common in FB2)
       const own = { ...section };
       delete own.section;
       delete own.title;
-      const ownText = extractTextFromFb2Node(own).trim();
-      if (ownText) {
+      let ownText = extractTextFromFb2Node(own).trim();
+      if (prependText) {
+        ownText = ownText ? prependText + "\n\n" + ownText : prependText;
+      }
+      const children = Array.isArray(section.section) ? section.section : [section.section];
+      if (ownText && ownText.length >= 120) {
         chapters.push({
           id: "ch" + (chapterIndex++),
           title: sectionTitle || ("Глава " + chapterIndex),
           text: ownText,
         });
-      }
-      const children = Array.isArray(section.section) ? section.section : [section.section];
-      for (const child of children) {
-        processSection(child, sectionTitle);
+        for (const child of children) {
+          processSection(child, sectionTitle, "");
+        }
+      } else {
+        let carry = ownText || "";
+        for (let i = 0; i < children.length; i++) {
+          processSection(children[i], sectionTitle, i === 0 ? carry : "");
+          carry = "";
+        }
       }
     } else {
-      const text = extractTextFromFb2Node(section).trim();
+      let text = extractTextFromFb2Node(section).trim();
+      if (prependText) {
+        text = text ? prependText + "\n\n" + text : prependText;
+      }
       if (text) {
         chapters.push({
           id: "ch" + (chapterIndex++),
@@ -272,6 +279,26 @@ function parseFb2(content) {
       title: title,
       text: "Не удалось извлечь текст из FB2",
     });
+  }
+
+  const merged = [];
+  for (const ch of chapters) {
+    const t = (ch.text || "").trim();
+    if (!t) continue;
+    if (
+      merged.length &&
+      t.length < 80 &&
+      merged[merged.length - 1].text.length < 400
+    ) {
+      const prev = merged[merged.length - 1];
+      prev.text = prev.text + "\n\n" + t;
+    } else {
+      merged.push({ ...ch, text: t });
+    }
+  }
+  if (merged.length) {
+    for (let i = 0; i < merged.length; i++) merged[i].id = "ch" + i;
+    return { title, author, chapters: merged };
   }
 
   return { title, author, chapters };
@@ -678,7 +705,6 @@ function startPythonServer() {
       const text = data.toString();
       logBuf += text;
       if (logBuf.length > 12000) logBuf = logBuf.slice(-8000);
-      // tqdm / progress bars often use \r without newline — pass through
       if (/\r|%\|█|Downloading|Fetching|Fetching [0-9]|Loading/.test(text)) {
         process.stdout.write(text);
       }
@@ -987,7 +1013,6 @@ function startExpress() {
 
         const { chapterIndex, charOffset, progress } = req.body || {};
         if (typeof chapterIndex === "number") book.chapterIndex = chapterIndex;
-        // charOffset historically stores page index in page modes
         if (typeof charOffset === "number") book.charOffset = charOffset;
         if (typeof progress === "number") book.progress = Math.min(100, Math.max(0, progress));
 

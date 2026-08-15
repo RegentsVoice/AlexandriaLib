@@ -1,14 +1,9 @@
-"""Minimal HF compatibility: quiet xet spam + strip deprecated kwargs.
-
-No progress-bar hacks — use library-native download output as-is.
-"""
 from __future__ import annotations
 
 import os
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-# cut hf_xet JSON INFO flood; errors still show
 os.environ.setdefault("RUST_LOG", "error")
 os.environ.setdefault("HF_XET_LOG_LEVEL", "error")
 
@@ -36,7 +31,7 @@ def apply() -> None:
             def wrapped(*args, **kwargs):
                 return orig(*args, **_strip_kwargs(kwargs))
 
-            wrapped._al_patched = True  # type: ignore[attr-defined]
+            wrapped._al_patched = True
             return wrapped
 
         setattr(hub, name, _wrap(fn))
@@ -53,7 +48,7 @@ def apply() -> None:
                 def wrapped(*args, **kwargs):
                     return orig(*args, **_strip_kwargs(kwargs))
 
-                wrapped._al_patched = True  # type: ignore[attr-defined]
+                wrapped._al_patched = True
                 return wrapped
 
             setattr(fd, name, _wrap2(fn))

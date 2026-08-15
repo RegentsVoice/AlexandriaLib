@@ -176,8 +176,29 @@
     <div class="reader-view-wrap">
       <div class="page-nav-zone left" id="pageNavPrev" aria-label="Предыдущая страница"></div>
       <div class="page-nav-zone right" id="pageNavNext" aria-label="Следующая страница"></div>
-      <div id="readerContent" class="reader-content layout-scroll"></div>
-      <div class="page-indicator" id="pageIndicator"></div>
+      <div id="readerContent" class="reader-content layout-pages"></div>
+    </div>
+    <div class="reader-bottom-bar" id="readerBottomBar">
+      <div class="reader-bar-chapter-wrap">
+        <span class="reader-bar-chapter" id="readerBarChapter"></span>
+      </div>
+      <div class="reader-bar-pages" id="pageIndicator"></div>
+      <div class="reader-bar-tts hidden" id="readerBarTts">
+        <div class="reader-bar-wave-wrap" aria-hidden="true">
+          <canvas id="readerBarWave" class="reader-bar-wave" width="120" height="28"></canvas>
+        </div>
+        <div class="reader-bar-controls">
+          <button type="button" id="btnBarTtsPrev" class="reader-bar-btn" title="Предыдущее" aria-label="Предыдущее">
+            <svg class="icon"><use href="#i-prev"/></svg>
+          </button>
+          <button type="button" id="btnBarTtsPlay" class="reader-bar-btn primary" title="Слушать" aria-label="Слушать">
+            <svg class="icon icon-play"><use href="#i-play"/></svg>
+          </button>
+          <button type="button" id="btnBarTtsNext" class="reader-bar-btn" title="Следующее" aria-label="Следующее">
+            <svg class="icon"><use href="#i-next"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
     <audio id="ttsAudio" class="hidden"></audio>
   </div>
@@ -316,20 +337,13 @@
           </div>
           <div class="settings-pane" data-pane="layout" role="tabpanel" hidden>
             <label class="settings-row">
-              <span>Режим чтения</span>
-              <select id="layoutMode">
-                <option value="scroll">Лента</option>
-                <option value="pages" selected>Страницы</option>
-              </select>
-            </label>
-            <label class="settings-row">
               <span>Пагинация</span>
               <select id="pageIndicatorMode">
                 <option value="total" selected>Общее число страниц</option>
                 <option value="chapter">По главам</option>
               </select>
             </label>
-            <p class="settings-hint">Лента — непрерывная прокрутка. Страницы — листание экранами (на широком экране по две). Пагинация задаёт формат счётчика внизу.</p>
+            <p class="settings-hint">Разворот на две страницы. На узком экране — одна. Следующая глава продолжается сразу.</p>
           </div>
           <div class="settings-pane" data-pane="tts" role="tabpanel" hidden>
             <label class="settings-row">

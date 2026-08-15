@@ -1,7 +1,3 @@
-"""
-AlexandriaLib TTS server
-"""
-
 import os
 import io
 import hashlib
@@ -9,7 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-import hf_compat  # noqa: F401
+import hf_compat
 
 import torch
 import soundfile as sf
