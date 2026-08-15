@@ -3,6 +3,7 @@ books/
 *.log
 .DS_Store
 Thumbs.db
+package-lock.json
 
 # Python
 python/.venv/
