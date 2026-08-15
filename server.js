@@ -21,7 +21,7 @@ const LIBRARY_FILE = path.join(BOOKS_DIR, "library.json");
 const SETUP_MARKER = path.join(PYTHON_DIR, ".setup-ok");
 
 const PYTHON_PORT = 8765;
-const NODE_PORT = process.env.PORT || 3000;
+const NODE_PORT = process.env.PORT || 8766;
 
 const isWindows = process.platform === "win32";
 const pythonBin = isWindows
