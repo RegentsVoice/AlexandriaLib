@@ -1,6 +1,6 @@
 {
   "name": "alexandria-lib",
-  "version": "2.0.0",
+  "version": "2.1.1",
   "description": "AlexandriaLib — self-hosted ebook library & reader with TTS (txt, fb2, epub)",
   "main": "server.js",
   "scripts": {
