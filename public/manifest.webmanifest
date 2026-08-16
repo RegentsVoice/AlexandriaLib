@@ -1,0 +1,12 @@
+{
+  "name": "AlexandriaLib",
+  "short_name": "Alexandria",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0b0c",
+  "theme_color": "#0b0b0c",
+  "icons": [
+    { "src": "/logo.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/favicon.png", "sizes": "64x64", "type": "image/png" }
+  ]
+}

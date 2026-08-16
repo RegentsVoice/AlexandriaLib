@@ -8,17 +8,20 @@ let currentBook = null;
 let currentChapterIndex = 0;
 let isSpeaking = false;
 let settings = loadSettings();
+let currentUser = null;
+let authMode = "login";
+let pendingUploadFile = null;
 
 let ttsSentences = [];
 let ttsPos = 0;
-let ttsPrefetch = null;
-let ttsPrefetchPromise = null;
+let ttsCache = new Map();
+let ttsPrefetching = new Set();
 let ttsStopped = true;
-let ttsPicked = null; 
+let ttsPicked = null;
 let ttsPanelOpen = false;
-let ttsGeneration = 0; 
-let ttsAbort = null; 
-let ttsPrefetchAbort = null;
+let ttsGeneration = 0;
+let ttsAbort = null;
+const TTS_PREFETCH_AHEAD = 3;
 let sleepTimerId = null;
 let sleepTimerEndsAt = 0;
 let sleepStopAtChapterEnd = false;
@@ -342,7 +345,21 @@ function applySettings() {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
+  const headers = { ...(opts.headers || {}) };
+  if (opts.body && typeof opts.body === "string" && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(path, {
+    ...opts,
+    headers,
+    credentials: "same-origin",
+  });
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    currentUser = null;
+    showAuthView();
+    const err = await res.json().catch(() => ({ error: "Требуется вход" }));
+    throw new Error(err.error || "Требуется вход");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "Ошибка запроса");
@@ -353,6 +370,176 @@ async function api(path, opts = {}) {
 async function loadBooks() {
   books = await api("/api/books");
   renderLibrary();
+}
+
+function showAuthView() {
+  $("#authView")?.classList.remove("hidden");
+  $("#libraryView")?.classList.add("hidden");
+  $("#readerView")?.classList.add("hidden");
+  $("#bookDetailView")?.classList.add("hidden");
+  updateUserBadge();
+  refreshPublicConfig();
+}
+
+function showLibraryView() {
+  $("#authView")?.classList.add("hidden");
+  $("#libraryView")?.classList.remove("hidden");
+  updateUserBadge();
+}
+
+function updateUserBadge() {
+  const badge = $("#userBadge");
+  const logout = $("#btnLogout");
+  if (!badge || !logout) return;
+  if (currentUser) {
+    badge.textContent = currentUser.username;
+    badge.classList.remove("hidden");
+    logout.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+    logout.classList.add("hidden");
+  }
+  updateAdminTabsVisibility();
+}
+
+async function refreshPublicConfig() {
+  try {
+    const cfg = await fetch("/api/auth/public-config", {
+      credentials: "same-origin",
+    }).then((r) => r.json());
+    const regTab = document.querySelector('.auth-tab[data-auth-tab="register"]');
+    if (regTab) {
+      regTab.classList.toggle("hidden", cfg.registrationOpen === false);
+    }
+    if (cfg.registrationOpen === false && authMode === "register") {
+      setAuthMode("login");
+    }
+  } catch (_) {}
+}
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+  $$(".auth-tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.authTab === authMode);
+  });
+  const submit = $("#authSubmit");
+  const pass = $("#authPassword");
+  if (submit) submit.textContent = authMode === "register" ? "Создать аккаунт" : "Войти";
+  if (pass) pass.autocomplete = authMode === "register" ? "new-password" : "current-password";
+  const err = $("#authError");
+  if (err) {
+    err.classList.add("hidden");
+    err.textContent = "";
+  }
+}
+
+async function checkAuth() {
+  try {
+    const data = await fetch("/api/auth/me", { credentials: "same-origin" }).then((r) => r.json());
+    if (data.authenticated && data.user) {
+      currentUser = data.user;
+      showLibraryView();
+      await loadBooks();
+      return true;
+    }
+  } catch (_) {}
+  currentUser = null;
+  showAuthView();
+  return false;
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const username = ($("#authUsername")?.value || "").trim();
+  const password = $("#authPassword")?.value || "";
+  const errEl = $("#authError");
+  const submit = $("#authSubmit");
+  if (errEl) {
+    errEl.classList.add("hidden");
+    errEl.textContent = "";
+  }
+  if (submit) submit.disabled = true;
+  try {
+    const path = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const data = await api(path, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    currentUser = data.user;
+    showLibraryView();
+    await loadBooks();
+    showToast(
+      authMode === "register" ? "Аккаунт создан" : "С возвращением, " + currentUser.username,
+      "ok",
+      2800
+    );
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = err.message || "Ошибка";
+      errEl.classList.remove("hidden");
+    }
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: "{}" });
+  } catch (_) {}
+  currentUser = null;
+  books = [];
+  stopTts(false);
+  showAuthView();
+}
+
+function openUploadModal() {
+  pendingUploadFile = null;
+  const name = $("#uploadFileName");
+  if (name) name.textContent = "Выберите файл";
+  const cb = $("#uploadIsPrivate");
+  if (cb) cb.checked = false;
+  const btn = $("#btnUploadSubmit");
+  if (btn) btn.disabled = true;
+  $("#uploadOverlay")?.classList.remove("hidden");
+}
+
+function closeUploadModal() {
+  $("#uploadOverlay")?.classList.add("hidden");
+  pendingUploadFile = null;
+  const fi = $("#uploadFileInput");
+  if (fi) fi.value = "";
+  const fi2 = $("#fileInput");
+  if (fi2) fi2.value = "";
+}
+
+async function submitUpload() {
+  if (!pendingUploadFile) return;
+  const isPrivate = !!$("#uploadIsPrivate")?.checked;
+  const btn = $("#btnUploadSubmit");
+  if (btn) btn.disabled = true;
+  showToast("Загрузка «" + pendingUploadFile.name + "»…", "ok", 2500);
+
+  const form = new FormData();
+  form.append("book", pendingUploadFile);
+  form.append("isPrivate", isPrivate ? "true" : "false");
+
+  try {
+    const res = await fetch("/api/books", {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Ошибка");
+    const priv = data.isPrivate ? " · личная" : "";
+    showToast(`Добавлено: «${data.title}» (${data.chaptersCount} гл.)${priv}`, "ok", 3500);
+    closeUploadModal();
+    await loadBooks();
+  } catch (err) {
+    showToast(err.message || "Ошибка загрузки", "error");
+    if (btn) btn.disabled = false;
+  }
 }
 
 function fitCoverImage(img, host) {
@@ -392,6 +579,9 @@ function bookStatus(b) {
   return "queue";
 }
 
+let libScope = "all";
+let selectedBookIds = new Set();
+
 function filteredBooks() {
   let list = books.slice();
   const q = (libQuery || "").trim().toLowerCase();
@@ -401,6 +591,13 @@ function filteredBooks() {
         (b.title || "").toLowerCase().includes(q) ||
         (b.author || "").toLowerCase().includes(q)
     );
+  }
+  if (libScope === "mine" && currentUser) {
+    list = list.filter((b) => b.ownerId === currentUser.id);
+  } else if (libScope === "public") {
+    list = list.filter((b) => !b.isPrivate);
+  } else if (libScope === "private") {
+    list = list.filter((b) => !!b.isPrivate);
   }
   if (libStatus && libStatus !== "all") {
     list = list.filter((b) => bookStatus(b) === libStatus);
@@ -412,7 +609,6 @@ function filteredBooks() {
     if (sort === "author")
       return (a.author || "").localeCompare(b.author || "", "ru", { sensitivity: "base" });
     if (sort === "progress") return (b.progress || 0) - (a.progress || 0);
-    
     return (b.addedAt || 0) - (a.addedAt || 0);
   });
   return list;
@@ -476,6 +672,12 @@ function renderLibrary() {
     empty.classList.remove("hidden");
     const t = empty.querySelector(".empty-title");
     if (t) t.textContent = "Пока нет книг";
+    const hint = empty.querySelector(".hint");
+    if (hint) {
+      hint.innerHTML =
+        'Загрузите TXT, FB2 или EPUB. <button type="button" class="btn-primary" id="emptyAddBtn">Добавить книгу</button>';
+      $("#emptyAddBtn")?.addEventListener("click", () => openUploadModal());
+    }
     contSec?.classList.add("hidden");
     return;
   }
@@ -486,7 +688,7 @@ function renderLibrary() {
     const t = empty.querySelector(".empty-title");
     if (t) t.textContent = "Ничего не найдено";
     const hint = empty.querySelector(".hint");
-    if (hint) hint.textContent = "Попробуйте другой запрос";
+    if (hint) hint.textContent = "Попробуйте другой запрос или фильтр";
     return;
   }
 
@@ -500,10 +702,22 @@ function renderLibrary() {
       const media = hasCover
         ? `<img class="bc-img" src="/api/books/${b.id}/cover" alt="" loading="lazy" draggable="false" />`
         : `<div class="bc-placeholder" style="background:${coverGradient(b.title || "")}"><span>${escapeHtml(letter)}</span></div>`;
-      return `<article class="bc${hasCover ? " has-cover" : ""}" data-id="${b.id}">
+      const priv = b.isPrivate
+        ? `<span class="bc-private" title="Личная книга">личная</span>`
+        : "";
+      const owner =
+        currentUser &&
+        currentUser.isAdmin &&
+        b.ownerName &&
+        b.ownerId !== currentUser.id
+          ? `<span class="bc-owner" title="Владелец">${escapeHtml(b.ownerName)}</span>`
+          : "";
+      return `<article class="bc${hasCover ? " has-cover" : ""}${b.isPrivate ? " is-private" : ""}" data-id="${b.id}">
   <div class="bc-media">${media}</div>
   <div class="bc-ui">
     <span class="bc-status ${st}"></span>
+    ${priv}
+    ${owner}
     <span class="bc-progress">${prog}%</span>
     <button type="button" class="bc-delete delete-btn" data-id="${b.id}" title="Удалить" aria-label="Удалить">
       <svg class="icon"><use href="#i-trash"/></svg>
@@ -629,6 +843,9 @@ function renderBookDetail(book) {
   const stSel = $("#detailStatus");
   if (stSel) stSel.value = bookStatus(book);
 
+  const priv = $("#detailIsPrivate");
+  if (priv) priv.checked = !!book.isPrivate;
+
   const hint = $("#detailSaveHint");
   if (hint) {
     hint.textContent = "";
@@ -672,6 +889,7 @@ async function saveDetailBook() {
     year: ($("#detailYear")?.value || "").trim(),
     description: ($("#detailDesc")?.value || "").trim(),
     status: $("#detailStatus")?.value || "queue",
+    isPrivate: !!$("#detailIsPrivate")?.checked,
   };
   try {
     await api("/api/books/" + detailBookId, {
@@ -1172,27 +1390,35 @@ function bindPagedNavigation() {
   );
 }
 
-$("#fileInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
+$("#btnAddBook")?.addEventListener("click", () => openUploadModal());
+$("#btnCloseUpload")?.addEventListener("click", closeUploadModal);
+$("#btnUploadCancel")?.addEventListener("click", closeUploadModal);
+$("#uploadOverlay")?.addEventListener("click", (e) => {
+  if (e.target === $("#uploadOverlay")) closeUploadModal();
+});
+$("#btnUploadSubmit")?.addEventListener("click", submitUpload);
+
+function onUploadFileChosen(file) {
   if (!file) return;
+  pendingUploadFile = file;
+  const name = $("#uploadFileName");
+  if (name) name.textContent = file.name;
+  const btn = $("#btnUploadSubmit");
+  if (btn) btn.disabled = false;
+}
 
-  showToast("Загрузка «" + file.name + "»…", "ok", 2500);
-
-  const form = new FormData();
-  form.append("book", file);
-
-  try {
-    const res = await fetch("/api/books", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Ошибка");
-
-    showToast(`Добавлено: «${data.title}» (${data.chaptersCount} гл.)`, "ok", 3500);
-    await loadBooks();
-  } catch (err) {
-    showToast(err.message || "Ошибка загрузки", "error");
-  }
-
-  e.target.value = "";
+$("#uploadFileInput")?.addEventListener("change", (e) => {
+  onUploadFileChosen(e.target.files?.[0]);
+});
+$("#fileInput")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  openUploadModal();
+  onUploadFileChosen(file);
+});
+$("#uploadDrop")?.addEventListener("click", (e) => {
+  if (e.target.closest("input")) return;
+  $("#uploadFileInput")?.click();
 });
 
 async function openBook(id) {
@@ -1385,7 +1611,11 @@ async function saveProgress() {
   const totalCh = Math.max(1, currentBook.chapters?.length || 1);
   const ch = Number.isFinite(pageCursor?.ch) ? pageCursor.ch : currentChapterIndex || 0;
   const u = Number.isFinite(pageCursor?.u) ? pageCursor.u : 0;
-  let progress = Math.round(((ch + 0.5) / totalCh) * 100);
+  const units = typeof chapterUnits === "function" ? chapterUnits(ch) : [];
+  const totalU = Math.max(1, units.length || 1);
+  const frac = Math.min(1, Math.max(0, u / totalU));
+  let progress = Math.round(((ch + frac) / totalCh) * 100);
+  if (ch >= totalCh - 1 && frac >= 0.92) progress = 100;
   progress = Math.min(100, Math.max(0, progress));
   try {
     await api("/api/books/" + currentBook.id + "/progress", {
@@ -1450,16 +1680,29 @@ $("#btnCloseToc").addEventListener("click", () => {
   $("#tocOverlay").classList.add("hidden");
 });
 
+function updateAdminTabsVisibility() {
+  const isAdmin = !!(currentUser && currentUser.isAdmin);
+  $$(".settings-tab.admin-only").forEach((t) => {
+    t.classList.toggle("hidden", !isAdmin);
+  });
+}
+
 function openSettings(tab) {
   applySettings();
-  syncSettingsTtsFields();
   updateThemeSwatches();
-  if (tab) selectSettingsTab(tab);
+  updateAdminTabsVisibility();
+  const isAdmin = !!(currentUser && currentUser.isAdmin);
+  let target = tab || "text";
+  if (!isAdmin && (target === "server" || target === "users")) target = "text";
+  selectSettingsTab(target);
+  if (isAdmin && target === "server") loadServerConfig();
+  if (isAdmin && target === "users") loadAdminUsers();
   $("#settingsOverlay").classList.remove("hidden");
 }
 
 function closeSettings() {
   $("#settingsOverlay").classList.add("hidden");
+  $("#adminUserBooks")?.classList.add("hidden");
 }
 
 function selectSettingsTab(name) {
@@ -1474,15 +1717,229 @@ function selectSettingsTab(name) {
     if (on) p.removeAttribute("hidden");
     else p.setAttribute("hidden", "");
   });
+  if (name === "server" && currentUser?.isAdmin) loadServerConfig();
+  if (name === "users" && currentUser?.isAdmin) loadAdminUsers();
 }
 
-function syncSettingsTtsFields() {
-  const sp = settings.speaker || $("#ttsSpeaker")?.value || "xenia";
-  const spd = settings.speed != null ? settings.speed : Number($("#ttsSpeed")?.value || 1);
-  if ($("#settingsSpeaker")) $("#settingsSpeaker").value = sp;
-  if ($("#settingsSpeed")) {
-    $("#settingsSpeed").value = spd;
-    if ($("#settingsSpeedVal")) $("#settingsSpeedVal").textContent = Number(spd).toFixed(1) + "×";
+async function loadServerConfig() {
+  try {
+    const cfg = await api("/api/admin/config");
+    const lo = $("#cfgLocalhostOnly");
+    const reg = $("#cfgRegistrationDisabled");
+    if (lo) lo.checked = !!cfg.localhostOnly;
+    if (reg) reg.checked = !!cfg.registrationDisabled;
+    const hint = $("#cfgServerHint");
+    if (hint) hint.textContent = "";
+  } catch (err) {
+    showToast(err.message || "Ошибка загрузки настроек", "error");
+  }
+}
+
+async function saveServerConfig() {
+  const body = {
+    localhostOnly: !!$("#cfgLocalhostOnly")?.checked,
+    registrationDisabled: !!$("#cfgRegistrationDisabled")?.checked,
+  };
+  try {
+    const res = await api("/api/admin/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    const hint = $("#cfgServerHint");
+    if (hint) {
+      hint.textContent = res.message || "Сохранено";
+      hint.className = "settings-hint";
+    }
+    showToast(res.message || "Настройки сервера сохранены", "ok");
+  } catch (err) {
+    showToast(err.message || "Ошибка сохранения", "error");
+  }
+}
+
+async function loadAdminUsers() {
+  const list = $("#adminUsersList");
+  const booksPanel = $("#adminUserBooks");
+  if (booksPanel) {
+    booksPanel.classList.add("hidden");
+    booksPanel.innerHTML = "";
+  }
+  if (!list) return;
+  list.innerHTML = "<p class='settings-hint'>Загрузка…</p>";
+  try {
+    const data = await api("/api/admin/users");
+    const users = data.users || [];
+    if (!users.length) {
+      list.innerHTML = "<p class='settings-hint'>Нет пользователей</p>";
+      return;
+    }
+    list.innerHTML = users
+      .map((u) => {
+        const me = currentUser && currentUser.id === u.id;
+        return `<div class="admin-user-row" data-id="${u.id}">
+          <div class="admin-user-main">
+            <strong>${escapeHtml(u.username)}</strong>
+            ${u.isAdmin ? '<span class="admin-badge">admin</span>' : ""}
+            ${me ? '<span class="admin-badge me">вы</span>' : ""}
+            <span class="admin-user-meta">${u.booksCount} кн. · ${u.privateCount} личн.</span>
+          </div>
+          <div class="admin-user-actions">
+            <button type="button" class="btn-secondary sm" data-action="lib" data-id="${u.id}">Библиотека</button>
+            ${
+              !me
+                ? `<button type="button" class="btn-secondary sm" data-action="admin" data-id="${u.id}" data-admin="${u.isAdmin ? "0" : "1"}">${
+                    u.isAdmin ? "Снять admin" : "Сделать admin"
+                  }</button>
+            <button type="button" class="btn-secondary sm" data-action="resetpwd" data-id="${u.id}">Пароль</button>
+            <button type="button" class="btn-secondary sm danger" data-action="del" data-id="${u.id}">Удалить</button>`
+                : ""
+            }
+          </div>
+        </div>`;
+      })
+      .join("");
+    list.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", onAdminUserAction);
+    });
+  } catch (err) {
+    list.innerHTML = `<p class="settings-hint">${escapeHtml(err.message || "Ошибка")}</p>`;
+  }
+}
+
+async function onAdminUserAction(e) {
+  const btn = e.currentTarget;
+  const action = btn.dataset.action;
+  const id = Number(btn.dataset.id);
+  if (!Number.isFinite(id)) return;
+  if (action === "lib") {
+    await showUserLibrary(id);
+    return;
+  }
+  if (action === "admin") {
+    const makeAdmin = btn.dataset.admin === "1";
+    try {
+      await api("/api/admin/users/" + id + "/set-admin", {
+        method: "POST",
+        body: JSON.stringify({ isAdmin: makeAdmin }),
+      });
+      showToast(makeAdmin ? "Права admin выданы" : "Права admin сняты", "ok");
+      await loadAdminUsers();
+    } catch (err) {
+      showToast(err.message || "Ошибка", "error");
+    }
+    return;
+  }
+  if (action === "del") {
+    const withBooks = confirm(
+      "Удалить пользователя?\nОК — только аккаунт\nПосле этого можно будет удалить и книги отдельно.\n\nНажмите ОК, чтобы отменить."
+    );
+    if (!withBooks && !confirm("Отмена удаления?")) {
+      /* fallthrough only when first confirm true */
+    }
+    if (!withBooks) return;
+    const deleteBooks = confirm("Также удалить все его книги?");
+    try {
+      await api("/api/admin/users/" + id, {
+        method: "DELETE",
+        body: JSON.stringify({ deleteBooks }),
+      });
+      showToast(
+        deleteBooks ? "Пользователь и книги удалены" : "Пользователь удалён",
+        "ok"
+      );
+      await loadAdminUsers();
+      await loadBooks();
+    } catch (err) {
+      showToast(err.message || "Ошибка", "error");
+    }
+  }
+  if (action === "resetpwd") {
+    const newPassword = prompt("Новый пароль (мин. 4 символа):");
+    if (!newPassword) return;
+    try {
+      await api("/api/admin/users/" + id + "/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ newPassword }),
+      });
+      showToast("Пароль сброшен", "ok");
+    } catch (err) {
+      showToast(err.message || "Ошибка", "error");
+    }
+  }
+}
+
+async function showUserLibrary(userId) {
+  const panel = $("#adminUserBooks");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  panel.innerHTML = "<p class='settings-hint'>Загрузка библиотеки…</p>";
+  try {
+    const data = await api("/api/admin/users/" + userId + "/books");
+    const user = data.user;
+    const books = data.books || [];
+    let html = `<div class="admin-books-head">
+      <strong>${escapeHtml(user?.username || "")}</strong>
+      <button type="button" class="btn-icon sm" id="btnCloseUserBooks" aria-label="Закрыть">
+        <svg class="icon"><use href="#i-close"/></svg>
+      </button>
+    </div>`;
+    if (!books.length) {
+      html += "<p class='settings-hint'>У пользователя нет книг</p>";
+    } else {
+      html +=
+        '<ul class="admin-books-list">' +
+        books
+          .map(
+            (b) =>
+              `<li data-book-id="${b.id}">
+                <div class="ab-info">
+                  <span class="ab-title">${escapeHtml(b.title)}</span>
+                  <span class="ab-meta">${escapeHtml(b.author || "")} · ${(b.format || "").toUpperCase()}${
+                    b.isPrivate ? " · личная" : ""
+                  } · ${Math.round(b.progress || 0)}%</span>
+                </div>
+                <div class="ab-actions">
+                  <button type="button" class="btn-secondary sm" data-ab="open" data-id="${b.id}">Открыть</button>
+                  <button type="button" class="btn-secondary sm danger" data-ab="del" data-id="${b.id}">Удалить</button>
+                </div>
+              </li>`
+          )
+          .join("") +
+        "</ul>";
+    }
+    panel.innerHTML = html;
+    $("#btnCloseUserBooks")?.addEventListener("click", () => {
+      panel.classList.add("hidden");
+      panel.innerHTML = "";
+    });
+    panel.querySelectorAll("[data-ab]").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const id = btn.dataset.id;
+        const act = btn.dataset.ab;
+        if (!id) return;
+        if (act === "open") {
+          closeSettings();
+          try {
+            await openBook(id);
+          } catch (err) {
+            showToast(err.message || "Не удалось открыть", "error");
+          }
+          return;
+        }
+        if (act === "del") {
+          if (!confirm("Удалить эту книгу?")) return;
+          try {
+            await api("/api/books/" + id, { method: "DELETE" });
+            showToast("Книга удалена", "ok");
+            await showUserLibrary(userId);
+            await loadBooks();
+          } catch (err) {
+            showToast(err.message || "Ошибка удаления", "error");
+          }
+        }
+      });
+    });
+  } catch (err) {
+    panel.innerHTML = `<p class="settings-hint">${escapeHtml(err.message || "Ошибка")}</p>`;
   }
 }
 
@@ -1529,27 +1986,7 @@ $$(".theme-swatch").forEach((sw) => {
   });
 });
 
-$("#settingsSpeaker")?.addEventListener("change", (e) => {
-  settings.speaker = e.target.value;
-  saveSettings();
-  if ($("#ttsSpeaker")) $("#ttsSpeaker").value = settings.speaker;
-  if (!ttsStopped) restartTtsWithNewSettings();
-});
-
-$("#settingsSpeed")?.addEventListener("input", (e) => {
-  const v = Number(e.target.value);
-  settings.speed = v;
-  if ($("#settingsSpeedVal")) $("#settingsSpeedVal").textContent = v.toFixed(1) + "×";
-  if ($("#ttsSpeed")) {
-    $("#ttsSpeed").value = v;
-    $("#ttsSpeedVal").textContent = v.toFixed(1) + "×";
-  }
-  saveSettings();
-});
-
-$("#settingsSpeed")?.addEventListener("change", () => {
-  if (!ttsStopped) restartTtsWithNewSettings();
-});
+$("#btnSaveServerConfig")?.addEventListener("click", () => saveServerConfig());
 
 $("#fontSize").addEventListener("input", (e) => {
   settings.fontSize = Number(e.target.value);
@@ -1822,18 +2259,11 @@ function setScrollLock(on) {
 }
 
 function getTtsSpeaker() {
-  return (
-    $("#ttsSpeaker")?.value ||
-    $("#settingsSpeaker")?.value ||
-    settings.speaker ||
-    "xenia"
-  );
+  return $("#ttsSpeaker")?.value || settings.speaker || "xenia";
 }
 
 function getTtsSpeed() {
-  const v = Number(
-    $("#ttsSpeed")?.value || $("#settingsSpeed")?.value || settings.speed || 1
-  );
+  const v = Number($("#ttsSpeed")?.value || settings.speed || 1);
   return Number.isFinite(v) && v > 0 ? v : 1;
 }
 
@@ -1845,89 +2275,111 @@ function sanitizeTtsText(text) {
   return t;
 }
 
-async function fetchSentenceAudio(text, gen, { prefetch = false } = {}) {
+
+async function fetchSentenceAudio(text, gen, { signal } = {}) {
   const speaker = getTtsSpeaker();
   const speed = getTtsSpeed();
   let t = sanitizeTtsText(text);
   if (!t) throw new Error("Пустое предложение");
 
-  
-  if (!prefetch) {
-    if (ttsAbort) {
-      try { ttsAbort.abort(); } catch (_) {}
-    }
-    ttsAbort = new AbortController();
-  } else {
-    if (ttsPrefetchAbort) {
-      try { ttsPrefetchAbort.abort(); } catch (_) {}
-    }
-    ttsPrefetchAbort = new AbortController();
-  }
-  const signal = (prefetch ? ttsPrefetchAbort : ttsAbort).signal;
-
-  let res;
-  try {
-    res = await fetch("/api/tts/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: t, speaker, speed }),
-      signal,
-    });
-  } catch (err) {
-    if (err.name === "AbortError" || gen !== ttsGeneration) throw new Error("cancelled");
-    throw new Error("Сеть / TTS недоступен");
-  }
-
-  if (gen !== ttsGeneration) throw new Error("cancelled");
-
-  if (!res.ok) {
-    const raw = await res.text().catch(() => "");
-    let msg = "Ошибка TTS (" + res.status + ")";
+  const doFetch = async () => {
+    let res;
     try {
-      const err = JSON.parse(raw);
-      if (typeof err.detail === "string") msg = err.detail;
-      else if (Array.isArray(err.detail))
-        msg = err.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
-      else if (err.error) msg = err.error + (err.detail ? ": " + err.detail : "");
-      else if (err.message) msg = err.message;
-    } catch (_) {
-      if (raw && raw.length < 200) msg = raw;
+      res = await fetch("/api/tts/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t, speaker, speed }),
+        signal,
+      });
+    } catch (err) {
+      if (err.name === "AbortError" || gen !== ttsGeneration) throw new Error("cancelled");
+      throw new Error("Сеть / TTS недоступен");
     }
-    throw new Error(msg);
-  }
 
-  const blob = await res.blob();
-  if (gen !== ttsGeneration) throw new Error("cancelled");
-  return URL.createObjectURL(blob);
+    if (gen !== ttsGeneration) throw new Error("cancelled");
+
+    if (!res.ok) {
+      const raw = await res.text().catch(() => "");
+      let msg = "Ошибка TTS (" + res.status + ")";
+      try {
+        const err = JSON.parse(raw);
+        if (typeof err.detail === "string") msg = err.detail;
+        else if (Array.isArray(err.detail))
+          msg = err.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+        else if (err.error) msg = err.error + (err.detail ? ": " + err.detail : "");
+        else if (err.message) msg = err.message;
+      } catch (_) {
+        if (raw && raw.length < 200) msg = raw;
+      }
+      throw new Error(msg);
+    }
+
+    const blob = await res.blob();
+    if (gen !== ttsGeneration) throw new Error("cancelled");
+    return URL.createObjectURL(blob);
+  };
+
+  try {
+    return await doFetch();
+  } catch (err) {
+    if (err.message === "cancelled") throw err;
+    if (signal && signal.aborted) throw new Error("cancelled");
+    await new Promise((r) => setTimeout(r, 350));
+    if (gen !== ttsGeneration) throw new Error("cancelled");
+    return await doFetch();
+  }
 }
 
 function clearPrefetch() {
-  if (ttsPrefetch) {
-    URL.revokeObjectURL(ttsPrefetch.url);
-    ttsPrefetch = null;
+  for (const entry of ttsCache.values()) {
+    try {
+      if (entry && entry.url) URL.revokeObjectURL(entry.url);
+    } catch (_) {}
   }
-  ttsPrefetchPromise = null;
+  ttsCache.clear();
+  ttsPrefetching.clear();
 }
 
-function prefetchNext(gen) {
-  const next = ttsPos + 1;
-  if (next >= ttsSentences.length) return;
-  if (ttsPrefetch && ttsPrefetch.index === next) return;
-  if (ttsPrefetchPromise) return;
+function fillPrefetch(gen) {
+  if (ttsStopped || gen !== ttsGeneration) return;
+  if (!ttsSentences.length) return;
 
-  const item = ttsSentences[next];
-  ttsPrefetchPromise = fetchSentenceAudio(item.text, gen, { prefetch: true })
-    .then((url) => {
-      if (ttsStopped || gen !== ttsGeneration || ttsPos + 1 !== next) {
-        URL.revokeObjectURL(url);
-        return;
-      }
-      ttsPrefetch = { index: next, url };
-    })
-    .catch(() => {})
-    .finally(() => {
-      ttsPrefetchPromise = null;
-    });
+  if (!ttsAbort) ttsAbort = new AbortController();
+  const signal = ttsAbort.signal;
+
+  const start = ttsPos;
+  const end = Math.min(ttsSentences.length, ttsPos + 1 + TTS_PREFETCH_AHEAD);
+
+  for (let i = start; i < end; i++) {
+    if (ttsCache.has(i) || ttsPrefetching.has(i)) continue;
+    const item = ttsSentences[i];
+    if (!item || !sanitizeTtsText(item.text)) continue;
+
+    ttsPrefetching.add(i);
+    const idx = i;
+    fetchSentenceAudio(item.text, gen, { signal })
+      .then((url) => {
+        if (ttsStopped || gen !== ttsGeneration) {
+          try { URL.revokeObjectURL(url); } catch (_) {}
+          return;
+        }
+        if (ttsCache.has(idx)) {
+          try { URL.revokeObjectURL(url); } catch (_) {}
+          return;
+        }
+        ttsCache.set(idx, { url, index: idx });
+        for (const [k, entry] of ttsCache) {
+          if (k < ttsPos - 1) {
+            try { URL.revokeObjectURL(entry.url); } catch (_) {}
+            ttsCache.delete(k);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        ttsPrefetching.delete(idx);
+      });
+  }
 }
 
 function advanceToChapter(chIndex, fromEnd) {
@@ -1982,7 +2434,7 @@ async function playAt(pos, gen) {
       if (ttsStopped) return;
       if (gen !== ttsGeneration) return;
       if (!advanceToChapter(nextCh, false)) finishTts();
-    }, 40);
+    }, 20);
     return;
   }
 
@@ -1998,17 +2450,25 @@ async function playAt(pos, gen) {
 
   if (ttsStatus) ttsStatus.textContent = `${pos + 1} / ${ttsSentences.length}`;
 
-  let url;
+  fillPrefetch(gen);
+
+  let url = null;
+  let fromCache = false;
+  const cached = ttsCache.get(pos);
+  if (cached && cached.url) {
+    url = cached.url;
+    ttsCache.delete(pos);
+    fromCache = true;
+  }
+
   try {
-    if (ttsPrefetch && ttsPrefetch.index === pos) {
-      url = ttsPrefetch.url;
-      ttsPrefetch = null;
-    } else {
+    if (!url) {
       $("#btnTtsPlay").disabled = true;
       if (ttsStatus) ttsStatus.textContent = `Генерация ${pos + 1}/${ttsSentences.length}...`;
-      url = await fetchSentenceAudio(item.text, gen);
+      if (!ttsAbort) ttsAbort = new AbortController();
+      url = await fetchSentenceAudio(item.text, gen, { signal: ttsAbort.signal });
       if (gen !== ttsGeneration) {
-        URL.revokeObjectURL(url);
+        try { URL.revokeObjectURL(url); } catch (_) {}
         return;
       }
       $("#btnTtsPlay").disabled = false;
@@ -2028,18 +2488,18 @@ async function playAt(pos, gen) {
   }
 
   highlightSentence(item.ch, item.si);
-  prefetchNext(gen);
+  fillPrefetch(gen);
 
   ttsAudio.onended = null;
   ttsAudio.onerror = null;
   ttsAudio.src = url;
 
   ttsAudio.onended = () => {
-    URL.revokeObjectURL(url);
+    try { URL.revokeObjectURL(url); } catch (_) {}
     if (!ttsStopped && gen === ttsGeneration) playAt(pos + 1, gen);
   };
   ttsAudio.onerror = () => {
-    URL.revokeObjectURL(url);
+    try { URL.revokeObjectURL(url); } catch (_) {}
     if (ttsStopped || gen !== ttsGeneration) return;
     if (ttsStatus) ttsStatus.textContent = "Ошибка воспроизведения";
     if (typeof showToast === "function") showToast("Ошибка воспроизведения", "error");
@@ -2062,7 +2522,11 @@ async function playAt(pos, gen) {
     setPlayIcon(true);
     setupMediaSessionHandlers();
     updateMediaSession("playing");
-        if (ttsStatus) ttsStatus.textContent = `${pos + 1} / ${ttsSentences.length}`;
+    if (ttsStatus) {
+      ttsStatus.textContent = fromCache
+        ? `${pos + 1} / ${ttsSentences.length}`
+        : `${pos + 1} / ${ttsSentences.length}`;
+    }
   } catch (err) {
     if (ttsStatus) ttsStatus.textContent = "Воспроизведение: " + err.message;
     if (!ttsStopped && gen === ttsGeneration) playAt(pos + 1, gen);
@@ -2088,10 +2552,6 @@ function beginQueue(sentences) {
     try { ttsAbort.abort(); } catch (_) {}
     ttsAbort = null;
   }
-  if (ttsPrefetchAbort) {
-    try { ttsPrefetchAbort.abort(); } catch (_) {}
-    ttsPrefetchAbort = null;
-  }
   try {
     ttsAudio.onended = null;
     ttsAudio.onerror = null;
@@ -2107,10 +2567,12 @@ function beginQueue(sentences) {
   setPlayIcon(true);
   updateReaderBarTts();
   if (ttsStatus) ttsStatus.textContent = "Генерация…";
+  ttsAbort = new AbortController();
+  fillPrefetch(gen);
   setTimeout(() => {
     if (gen !== ttsGeneration || ttsStopped) return;
     playAt(0, gen);
-  }, 20);
+  }, 10);
 }
 
 function collectFromVisiblePage() {
@@ -2321,11 +2783,17 @@ function stopTts(updateUi = true) {
   ttsStopped = true;
   isSpeaking = false;
   setScrollLock(false);
-  ttsAudio.pause();
-  ttsAudio.onended = null;
-  ttsAudio.onerror = null;
-  ttsAudio.removeAttribute("src");
-  ttsAudio.load();
+  if (ttsAbort) {
+    try { ttsAbort.abort(); } catch (_) {}
+    ttsAbort = null;
+  }
+  try {
+    ttsAudio.pause();
+    ttsAudio.onended = null;
+    ttsAudio.onerror = null;
+    ttsAudio.removeAttribute("src");
+    ttsAudio.load();
+  } catch (_) {}
   clearPrefetch();
 
   if (updateUi) {
@@ -2418,6 +2886,16 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
+  if (e.code === "KeyB" && inReader) {
+    e.preventDefault();
+    addBookmarkHere();
+    return;
+  }
+  if (e.code === "KeyT" && inReader) {
+    e.preventDefault();
+    $("#btnToc")?.click();
+    return;
+  }
   if (e.code === "Escape") {
     if (isSpeaking || !ttsStopped) {
       e.preventDefault();
@@ -2432,19 +2910,69 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-$$("#libStatusFilter .chip").forEach((chip) => {
-  chip.classList.toggle("active", chip.dataset.status === libStatus);
-  chip.addEventListener("click", () => {
-    libStatus = chip.dataset.status || "all";
+
+async function addBookmarkHere() {
+  if (!currentBook) return;
+  const ch = Number.isFinite(pageCursor?.ch) ? pageCursor.ch : currentChapterIndex || 0;
+  const u = Number.isFinite(pageCursor?.u) ? pageCursor.u : 0;
+  try {
+    await api("/api/books/" + currentBook.id + "/bookmarks", {
+      method: "POST",
+      body: JSON.stringify({
+        chapterIndex: ch,
+        charOffset: u,
+        label: "Глава " + (ch + 1),
+      }),
+    });
+    showToast("Закладка сохранена", "ok");
+  } catch (err) {
+    showToast(err.message || "Ошибка закладки", "error");
+  }
+}
+
+const libStatusSelect = $("#libStatus");
+if (libStatusSelect) {
+  libStatusSelect.value = libStatus || "all";
+  libStatusSelect.addEventListener("change", () => {
+    libStatus = libStatusSelect.value || "all";
     localStorage.setItem("al_lib_status", libStatus);
-    $$("#libStatusFilter .chip").forEach((c) =>
-      c.classList.toggle("active", c.dataset.status === libStatus)
-    );
     renderLibrary();
   });
+}
+
+const libScopeSelect = $("#libScope");
+if (libScopeSelect) {
+  libScopeSelect.value = libScope || "all";
+  libScopeSelect.addEventListener("change", () => {
+    libScope = libScopeSelect.value || "all";
+    renderLibrary();
+  });
+}
+
+$("#btnChangePassword")?.addEventListener("click", async () => {
+  const oldPassword = $("#pwdOld")?.value || "";
+  const newPassword = $("#pwdNew")?.value || "";
+  try {
+    await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ oldPassword, newPassword }),
+    });
+    showToast("Пароль изменён", "ok");
+    if ($("#pwdOld")) $("#pwdOld").value = "";
+    if ($("#pwdNew")) $("#pwdNew").value = "";
+  } catch (err) {
+    showToast(err.message || "Ошибка", "error");
+  }
 });
 
+$("#btnDownloadBackup")?.addEventListener("click", () => {
+  window.location.href = "/api/admin/backup";
+});
+
+$("#btnBookmark")?.addEventListener("click", () => addBookmarkHere());
+
 $("#detailStatus")?.addEventListener("change", () => scheduleDetailSave());
+$("#detailIsPrivate")?.addEventListener("change", () => scheduleDetailSave());
 ["#detailTitle", "#detailAuthor", "#detailSeries", "#detailYear", "#detailDesc"].forEach((sel) => {
   const el = $(sel);
   if (!el) return;
@@ -2463,9 +2991,18 @@ $("#libSort")?.addEventListener("change", (e) => {
 });
 if ($("#libSort")) $("#libSort").value = libSort;
 
+$$(".auth-tab").forEach((tab) => {
+  tab.addEventListener("click", () => setAuthMode(tab.dataset.authTab));
+});
+$("#authForm")?.addEventListener("submit", handleAuthSubmit);
+$("#btnLogout")?.addEventListener("click", handleLogout);
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 applySettings();
-loadBooks().catch((err) => {
+checkAuth().catch((err) => {
   console.error(err);
-  const p = $("#emptyState")?.querySelector(".empty-title");
-  if (p) p.textContent = "Ошибка загрузки библиотеки";
+  showAuthView();
 });

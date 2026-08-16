@@ -1,56 +1,46 @@
-<p align="center">
-  <img src="public/logo.png" alt="OPEN Booru" width="180" />
-</p>
+# AlexandriaLib
 
-**AlexandriaLib** — локальная библиотека и читалка с озвучкой **Silero** (русский).
+Локальная библиотека книг (TXT / FB2 / EPUB) с озвучкой Silero TTS и мультипользовательским доступом.
 
-### Возможности
-
-| Возможность | Описание |
-| --- | --- |
-| **Форматы** | `.txt`, `.fb2`, `.epub` |
-| **Библиотека** | Обложки, поиск, сортировка, статусы, «Продолжить» |
-| **Читалка** | Лента / страница / разворот |
-| **Озвучка** | Голоса Silero, навигация по предложениям |
-| **Метаданные** | Правка прямо на карточке книги |
-
-### Требования
-
-* **Node.js ≥ 18**
-* **Python ≥ 3.10** (3.9 может работать, рекомендуется 3.10+)
-* **git**
-* Место под модели TTS (первый запуск дольше)
-
-### Установка
-
-#### 1. Автоматическая (рекомендуется)
-
-**Linux:**
+## Запуск
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RegentsVoice/AlexandriaLib/main/scripts/install-linux.sh | bash
-cd ~/AlexandriaLib && npm start
-```
-
-**Windows** (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/RegentsVoice/AlexandriaLib/main/scripts/install-windows.ps1 | iex
-cd $HOME\AlexandriaLib; npm start
-```
-
-#### 2. Вручную
-
-```bash
-git clone https://github.com/RegentsVoice/AlexandriaLib.git
-cd AlexandriaLib
 npm install
-npm run setup
-npm start
+node server.js
 ```
 
-### Использование
+Откройте: http://127.0.0.1:8766
 
-```
-http://localhost:3000
-```
+Первый зарегистрированный пользователь становится администратором.
+
+## Возможности
+
+- Загрузка TXT, FB2, EPUB
+- Читалка с пагинацией, темами, TTS
+- Учётки, сессии, смена пароля
+- Личные книги
+- Прогресс и статус на пользователя
+- Закладки (кнопка / клавиша B)
+- Admin: localhost/сеть, регистрация, пользователи, backup
+- Фильтры: мои / общие / личные
+- Массовое удаление книг (admin)
+- PWA
+- SQLite: общий core + отдельная БД на каждого пользователя (имена — случайные 8 цифр)
+- TTS: очередь с предзагрузкой 3 предложений, retry, плавный переход глав
+
+## Порты
+
+- Node: 8766 (`PORT`)
+- TTS: 8765
+
+Сервер слушает 0.0.0.0; middleware «только localhost» настраивается в админке.
+
+## Данные
+
+- `books/` — файлы книг, обложки, `*.chapters.json`
+- `data/cXXXXXXXX.sqlite` — общая БД (users, books meta, sessions, config)
+- `data/udb/uXXXXXXXX.sqlite` — БД пользователя (progress, bookmarks)
+- `data/core.name` — имя файла общей БД
+- `data/session.secret`
+
+При первом запуске, если есть старые `users.json` / `library.json`, выполняется миграция.

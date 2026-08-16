@@ -9,6 +9,17 @@ const multer = require("multer");
 const { v4: uuidv4 } = require("uuid");
 const { XMLParser } = require("fast-xml-parser");
 const JSZip = require("jszip");
+const {
+  authMiddleware,
+  requireAuth,
+  registerAuthRoutes,
+  registerAdminRoutes,
+  localhostOnlyMiddleware,
+  canSeeBook,
+  canEditBook,
+  getAccessConfig,
+} = require("./auth");
+const db = require("./db");
 
 const ROOT = __dirname;
 const PYTHON_DIR = path.join(ROOT, "python");
@@ -17,7 +28,6 @@ const REQUIREMENTS = path.join(PYTHON_DIR, "requirements.txt");
 const TTS_SCRIPT = path.join(PYTHON_DIR, "tts_server.py");
 const PUBLIC_DIR = path.join(ROOT, "public");
 const BOOKS_DIR = path.join(ROOT, "books");
-const LIBRARY_FILE = path.join(BOOKS_DIR, "library.json");
 const SETUP_MARKER = path.join(PYTHON_DIR, ".setup-ok");
 
 const PYTHON_PORT = 8765;
@@ -73,32 +83,97 @@ function ensureDir(dir) {
   if (!exists(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-let libraryChain = Promise.resolve();
-
-function withLibrary(fn) {
-  const run = libraryChain.then(() => fn());
-  libraryChain = run.catch(() => {});
-  return run;
+function publicBookForUser(b, user) {
+  const fullUser = user && (user.dbName ? user : db.findUserById(user.id));
+  const st = db.getUserBookState(fullUser, b.id);
+  return {
+    id: b.id,
+    title: b.title,
+    author: b.author,
+    format: b.format,
+    progress: st.progress || 0,
+    chapterIndex: st.chapterIndex || 0,
+    charOffset: st.charOffset || 0,
+    addedAt: b.addedAt,
+    chaptersCount: b.chaptersCount || 0,
+    pageCount: b.pageCount || 0,
+    hasCover: !!(b.coverFile && exists(path.join(BOOKS_DIR, b.coverFile))),
+    series: b.series || "",
+    year: b.year || null,
+    description: b.description || "",
+    status: st.status || "queue",
+    isPrivate: !!b.isPrivate,
+    ownerId: b.ownerId || null,
+    ownerName: b.ownerName || null,
+    bookmarks: st.bookmarks || [],
+    lastTts: st.lastTts || null,
+  };
 }
 
-function loadLibrary() {
-  ensureDir(BOOKS_DIR);
-  if (!exists(LIBRARY_FILE)) {
-    fs.writeFileSync(LIBRARY_FILE, "[]", "utf8");
-    return [];
-  }
+function removeBookFiles(book) {
   try {
-    return JSON.parse(fs.readFileSync(LIBRARY_FILE, "utf8"));
-  } catch {
-    return [];
-  }
+    if (book.filename) {
+      const p = path.join(BOOKS_DIR, book.filename);
+      if (exists(p)) fs.unlinkSync(p);
+    }
+  } catch (_) {}
+  try {
+    if (book.coverFile) {
+      const p = path.join(BOOKS_DIR, book.coverFile);
+      if (exists(p)) fs.unlinkSync(p);
+    }
+  } catch (_) {}
+  try {
+    const ch = path.join(BOOKS_DIR, book.id + ".chapters.json");
+    if (exists(ch)) fs.unlinkSync(ch);
+  } catch (_) {}
 }
 
-function saveLibrary(lib) {
+async function deleteBooksByOwner(ownerId) {
+  const ids = db.deleteBooksByOwner(ownerId);
+  for (const id of ids) {
+    const book = { id, filename: null, coverFile: null };
+    const full = db.getBookById(id);
+    if (full) removeBookFiles(full);
+    else {
+      try {
+        const ch = path.join(BOOKS_DIR, id + ".chapters.json");
+        if (exists(ch)) fs.unlinkSync(ch);
+      } catch (_) {}
+    }
+  }
+  return ids.length;
+}
+
+async function createBackup() {
+  const zip = new JSZip();
+  const lib = db.loadBooks();
+  zip.file("library-export.json", JSON.stringify(lib, null, 2));
+  for (const f of db.listDbFiles()) {
+    if (exists(f)) {
+      const rel = path.relative(ROOT, f).replace(/\\/g, "/");
+      zip.file(rel, fs.readFileSync(f));
+    }
+  }
+  const secret = path.join(ROOT, "data", "session.secret");
+  if (exists(secret)) zip.file("data/session.secret", fs.readFileSync(secret));
+  for (const b of lib) {
+    if (b.filename) {
+      const p = path.join(BOOKS_DIR, b.filename);
+      if (exists(p)) zip.file("books/" + b.filename, fs.readFileSync(p));
+    }
+    if (b.coverFile) {
+      const p = path.join(BOOKS_DIR, b.coverFile);
+      if (exists(p)) zip.file("books/" + b.coverFile, fs.readFileSync(p));
+    }
+    const ch = path.join(BOOKS_DIR, b.id + ".chapters.json");
+    if (exists(ch)) zip.file("books/" + b.id + ".chapters.json", fs.readFileSync(ch));
+  }
+  const buf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
   ensureDir(BOOKS_DIR);
-  const tmp = LIBRARY_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(lib, null, 2), "utf8");
-  fs.renameSync(tmp, LIBRARY_FILE);
+  const out = path.join(BOOKS_DIR, "backup-" + Date.now() + ".zip");
+  fs.writeFileSync(out, buf);
+  return out;
 }
 
 function decodeOriginalName(name) {
@@ -170,7 +245,8 @@ function parseFb2(content) {
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
     textNodeName: "#text",
-    isArray: (name) => ["section", "title", "p", "v", "emphasis", "strong"].includes(name),
+    isArray: (name) =>
+      ["section", "title", "p", "v", "emphasis", "strong", "binary", "image"].includes(name),
   });
 
   let xml;
@@ -298,10 +374,10 @@ function parseFb2(content) {
   }
   if (merged.length) {
     for (let i = 0; i < merged.length; i++) merged[i].id = "ch" + i;
-    return { title, author, chapters: merged };
+    return { title, author, chapters: merged, fictionBook };
   }
 
-  return { title, author, chapters };
+  return { title, author, chapters, fictionBook };
 }
 
 function detectAndDecode(buffer) {
@@ -466,6 +542,39 @@ async function parseEpubAsync(filePath, originalName) {
   const spine = Array.isArray(spineNode) ? spineNode : [spineNode];
 
   function stripHtml(html) {
+    const entities = {
+      nbsp: " ",
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: '"',
+      apos: "'",
+      mdash: "—",
+      ndash: "–",
+      hellip: "…",
+      laquo: "«",
+      raquo: "»",
+      ldquo: "“",
+      rdquo: "”",
+      lsquo: "‘",
+      rsquo: "’",
+      times: "×",
+      divide: "÷",
+      copy: "©",
+      reg: "®",
+      trade: "™",
+      sect: "§",
+      para: "¶",
+      deg: "°",
+      plusmn: "±",
+      euro: "€",
+      pound: "£",
+      yen: "¥",
+      cent: "¢",
+      thinsp: " ",
+      ensp: " ",
+      emsp: " ",
+    };
     return String(html || "")
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -474,15 +583,25 @@ async function parseEpubAsync(filePath, originalName) {
       .replace(/<\/div>/gi, "\n")
       .replace(/<\/h[1-6]>/gi, "\n\n")
       .replace(/<[^>]+>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&#(\d+);/g, (_, n) => {
+        const c = Number(n);
+        return c >= 0 && c <= 0x10ffff ? String.fromCodePoint(c) : "";
+      })
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => {
+        const c = parseInt(h, 16);
+        return c >= 0 && c <= 0x10ffff ? String.fromCodePoint(c) : "";
+      })
+      .replace(/&([a-zA-Z]+);/g, (m, name) => entities[name.toLowerCase()] || m)
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
+  }
+
+  function safeZipPath(base, href) {
+    const raw = String(href || "").replace(/\\/g, "/");
+    const joined = path.posix.normalize((base || "") + raw);
+    if (joined.startsWith("../") || joined === "..") return null;
+    return joined;
   }
 
   const chapters = [];
@@ -493,7 +612,8 @@ async function parseEpubAsync(filePath, originalName) {
     const item = byId[idref];
     if (!item || !item.href) continue;
     if (item.type && !item.type.includes("html") && !item.type.includes("xml")) continue;
-    const full = opfDir + item.href;
+    const full = safeZipPath(opfDir, item.href);
+    if (!full) continue;
     const f = zip.file(full) || zip.file(decodeURIComponent(full));
     if (!f) continue;
     const html = await f.async("string");
@@ -532,15 +652,17 @@ async function parseEpubAsync(filePath, originalName) {
     });
   }
   if (coverItem && coverItem["@_href"]) {
-    const full = opfDir + coverItem["@_href"];
-    const f = zip.file(full) || zip.file(decodeURIComponent(full));
-    if (f) {
-      coverBuffer = await f.async("nodebuffer");
-      const mt = (coverItem["@_media-type"] || "").toLowerCase();
-      if (mt.includes("png")) coverExt = ".png";
-      else if (mt.includes("gif")) coverExt = ".gif";
-      else if (mt.includes("webp")) coverExt = ".webp";
-      else coverExt = ".jpg";
+    const full = safeZipPath(opfDir, coverItem["@_href"]);
+    if (full) {
+      const f = zip.file(full) || zip.file(decodeURIComponent(full));
+      if (f) {
+        coverBuffer = await f.async("nodebuffer");
+        const mt = (coverItem["@_media-type"] || "").toLowerCase();
+        if (mt.includes("png")) coverExt = ".png";
+        else if (mt.includes("gif")) coverExt = ".gif";
+        else if (mt.includes("webp")) coverExt = ".webp";
+        else coverExt = ".jpg";
+      }
     }
   }
 
@@ -755,8 +877,28 @@ function startPythonServer() {
 
 function startExpress() {
   const app = express();
-  app.use(cors());
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: "5mb" }));
+  app.use(localhostOnlyMiddleware);
+  app.use(authMiddleware);
+  registerAuthRoutes(app);
+  registerAdminRoutes(app, { deleteBooksByOwner, createBackup });
+
+  app.get("/api/health", async (req, res) => {
+    let tts = false;
+    try {
+      const r = await fetch("http://127.0.0.1:" + PYTHON_PORT + "/health");
+      tts = r.ok;
+    } catch (_) {
+      tts = false;
+    }
+    res.json({
+      ok: true,
+      tts,
+      time: Date.now(),
+      localhostOnly: !!getAccessConfig().localhostOnly,
+    });
+  });
 
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -785,29 +927,15 @@ function startExpress() {
 
   
 
-  app.get("/api/books", (req, res) => {
-    const lib = loadLibrary();
-    const list = lib.map((b) => ({
-      id: b.id,
-      title: b.title,
-      author: b.author,
-      format: b.format,
-      progress: b.progress || 0,
-      chapterIndex: b.chapterIndex || 0,
-      charOffset: b.charOffset || 0,
-      addedAt: b.addedAt,
-      chaptersCount: b.chaptersCount || 0,
-      pageCount: b.pageCount || 0,
-      hasCover: !!(b.coverFile && exists(path.join(BOOKS_DIR, b.coverFile))),
-      series: b.series || "",
-      year: b.year || null,
-      description: b.description || "",
-      status: b.status || (b.progress >= 100 ? "finished" : b.progress > 0 ? "reading" : "queue"),
-    }));
+  app.get("/api/books", requireAuth, (req, res) => {
+    const lib = db.loadBooks();
+    const list = lib
+      .filter((b) => canSeeBook(b, req.user))
+      .map((b) => publicBookForUser(b, req.user));
     res.json(list);
   });
 
-  app.post("/api/books", upload.single("book"), async (req, res) => {
+  app.post("/api/books", requireAuth, upload.single("book"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Файл не получен" });
@@ -817,6 +945,12 @@ function startExpress() {
       const ext = path.extname(originalName).toLowerCase().slice(1) ||
         path.extname(req.file.originalname).toLowerCase().slice(1);
       const id = path.basename(req.file.filename, path.extname(req.file.filename));
+      const isPrivate =
+        req.body &&
+        (req.body.isPrivate === true ||
+          req.body.isPrivate === "true" ||
+          req.body.isPrivate === "1" ||
+          req.body.isPrivate === "on");
 
       let parsed;
       let coverFile = null;
@@ -830,26 +964,14 @@ function startExpress() {
         }
       } else {
         parsed = parseBook(req.file.path, originalName, ext);
-        if (ext === "fb2") {
+        if (ext === "fb2" && parsed.fictionBook) {
           try {
-            const buffer = fs.readFileSync(req.file.path);
-            const content = detectAndDecode(buffer);
-            const parser = new XMLParser({
-              ignoreAttributes: false,
-              attributeNamePrefix: "@_",
-              textNodeName: "#text",
-              isArray: (name) =>
-                ["section", "title", "p", "v", "emphasis", "strong", "binary", "image"].includes(name),
-            });
-            const xml = parser.parse(content);
-            const fictionBook = xml.FictionBook || xml.fictionbook;
-            if (fictionBook) {
-              coverFile = extractFb2Cover(fictionBook, id);
-            }
+            coverFile = extractFb2Cover(parsed.fictionBook, id);
           } catch (e) {
             log("fb2 cover: " + e.message);
           }
         }
+        if (parsed.fictionBook) delete parsed.fictionBook;
       }
 
       const pageCount = estimatePageCount(parsed.chapters);
@@ -859,24 +981,19 @@ function startExpress() {
         author: parsed.author,
         format: ext,
         filename: req.file.filename,
-        progress: 0,
-        chapterIndex: 0,
-        charOffset: 0,
         addedAt: Date.now(),
         chaptersCount: parsed.chapters.length,
         pageCount,
         coverFile: coverFile || null,
-        status: "queue",
+        isPrivate: !!isPrivate,
+        ownerId: req.user.id,
+        ownerName: req.user.username,
       };
 
       const chaptersPath = path.join(BOOKS_DIR, id + ".chapters.json");
       fs.writeFileSync(chaptersPath, JSON.stringify(parsed.chapters), "utf8");
 
-      await withLibrary(() => {
-        const lib = loadLibrary();
-        lib.unshift(book);
-        saveLibrary(lib);
-      });
+      db.insertBook(book);
 
       res.json({
         id: book.id,
@@ -886,6 +1003,7 @@ function startExpress() {
         chaptersCount: book.chaptersCount,
         pageCount: book.pageCount,
         hasCover: !!coverFile,
+        isPrivate: book.isPrivate,
       });
     } catch (err) {
       log("upload error: " + err.message);
@@ -896,56 +1014,41 @@ function startExpress() {
     }
   });
 
-  app.get("/api/books/:id", async (req, res) => {
+  app.get("/api/books/:id", requireAuth, async (req, res) => {
     try {
+      const book = db.getBookById(req.params.id);
+      if (!book || !canSeeBook(book, req.user)) {
+        return res.status(404).json({ error: "Книга не найдена" });
+      }
+
       let chapters = null;
-      let bookSnapshot = null;
-
-      await withLibrary(async () => {
-        const lib = loadLibrary();
-        const book = lib.find((b) => b.id === req.params.id);
-        if (!book) {
-          bookSnapshot = null;
-          return;
-        }
-        bookSnapshot = book;
-
-        const chaptersPath = path.join(BOOKS_DIR, book.id + ".chapters.json");
-        if (exists(chaptersPath)) {
-          chapters = JSON.parse(fs.readFileSync(chaptersPath, "utf8"));
-        } else if (book.chapters && book.chapters.length) {
-          chapters = book.chapters;
+      const chaptersPath = path.join(BOOKS_DIR, book.id + ".chapters.json");
+      if (exists(chaptersPath)) {
+        chapters = JSON.parse(fs.readFileSync(chaptersPath, "utf8"));
+      } else {
+        const filePath = getBookPath(book);
+        if (book.format === "epub") {
+          const parsed = await parseEpubAsync(filePath, book.filename);
+          chapters = parsed.chapters;
         } else {
-          const filePath = getBookPath(book);
-          if (book.format === "epub") {
-            const parsed = await parseEpubAsync(filePath, book.filename);
-            chapters = parsed.chapters;
-          } else {
-            const parsed = parseBook(filePath, book.filename, book.format);
-            chapters = parsed.chapters;
-          }
-          fs.writeFileSync(chaptersPath, JSON.stringify(chapters), "utf8");
-          book.chaptersCount = chapters.length;
-          saveLibrary(lib);
+          const parsed = parseBook(filePath, book.filename, book.format);
+          chapters = parsed.chapters;
         }
+        fs.writeFileSync(chaptersPath, JSON.stringify(chapters), "utf8");
+        db.updateBook(book.id, { chaptersCount: chapters.length });
+        book.chaptersCount = chapters.length;
+      }
 
-        if (chapters && !book.pageCount) {
-          book.pageCount = estimatePageCount(chapters);
-          saveLibrary(lib);
-        }
-      });
+      if (chapters && !book.pageCount) {
+        const pc = estimatePageCount(chapters);
+        db.updateBook(book.id, { pageCount: pc });
+        book.pageCount = pc;
+      }
 
-      if (!bookSnapshot) return res.status(404).json({ error: "Книга не найдена" });
-
+      const pub = publicBookForUser(book, req.user);
       res.json({
-        id: bookSnapshot.id,
-        title: bookSnapshot.title,
-        author: bookSnapshot.author,
-        format: bookSnapshot.format,
-        progress: bookSnapshot.progress || 0,
-        chapterIndex: bookSnapshot.chapterIndex || 0,
-        charOffset: bookSnapshot.charOffset || 0,
-        pageCount: bookSnapshot.pageCount || estimatePageCount(chapters),
+        ...pub,
+        pageCount: book.pageCount || estimatePageCount(chapters),
         chapters,
       });
     } catch (err) {
@@ -954,118 +1057,160 @@ function startExpress() {
     }
   });
 
-  app.get("/api/books/:id/cover", (req, res) => {
-    const lib = loadLibrary();
-    const book = lib.find((b) => b.id === req.params.id);
-    if (!book || !book.coverFile) return res.status(404).end();
+  app.get("/api/books/:id/cover", requireAuth, (req, res) => {
+    const book = db.getBookById(req.params.id);
+    if (!book || !book.coverFile || !canSeeBook(book, req.user)) return res.status(404).end();
     const p = path.join(BOOKS_DIR, book.coverFile);
     if (!exists(p)) return res.status(404).end();
     res.sendFile(p);
   });
 
-  app.patch("/api/books/:id", async (req, res) => {
+
+  app.patch("/api/books/:id", requireAuth, async (req, res) => {
     try {
-      const result = await withLibrary(() => {
-        const lib = loadLibrary();
-        const book = lib.find((b) => b.id === req.params.id);
-        if (!book) return null;
-        const { title, author, series, year, description, status } = req.body || {};
-        if (title != null) {
-          const t = String(title).trim();
-          if (!t) return { error: "Пустое название", status: 400 };
-          book.title = t;
-        }
-        if (author != null) book.author = String(author).trim() || "Неизвестный автор";
-        if (series != null) book.series = String(series).trim();
-        if (year != null) {
-          const y = String(year).trim();
-          book.year = y ? Number(y) || null : null;
-        }
-        if (description != null) book.description = String(description).trim();
-        if (status != null && ["queue", "reading", "finished"].includes(status)) {
-          book.status = status;
-        }
-        saveLibrary(lib);
-        return {
-          ok: true,
-          title: book.title,
-          author: book.author,
-          series: book.series || "",
-          year: book.year || null,
-          description: book.description || "",
-          status: book.status || "queue",
-        };
+      const book = db.getBookById(req.params.id);
+      if (!book || !canSeeBook(book, req.user)) return res.status(404).json({ error: "Книга не найдена" });
+      if (!canEditBook(book, req.user)) {
+        return res.status(403).json({ error: "Нет прав на редактирование" });
+      }
+      const { title, author, series, year, description, status, isPrivate } = req.body || {};
+      const fields = {};
+      if (title != null) {
+        const t = String(title).trim();
+        if (!t) return res.status(400).json({ error: "Пустое название" });
+        fields.title = t;
+      }
+      if (author != null) fields.author = String(author).trim() || "Неизвестный автор";
+      if (series != null) fields.series = String(series).trim();
+      if (year != null) {
+        const y = String(year).trim();
+        fields.year = y ? Number(y) || null : null;
+      }
+      if (description != null) fields.description = String(description).trim();
+      if (isPrivate != null) {
+        fields.isPrivate = !!(isPrivate === true || isPrivate === "true" || isPrivate === 1 || isPrivate === "1");
+      }
+      const updated = Object.keys(fields).length ? db.updateBook(book.id, fields) : book;
+      const fullUser = db.findUserById(req.user.id);
+      if (status != null && ["queue", "reading", "finished"].includes(status)) {
+        const st = db.getUserBookState(fullUser, book.id);
+        st.status = status;
+        db.setUserBookState(fullUser, book.id, st);
+      }
+      const st = db.getUserBookState(fullUser, book.id);
+      res.json({
+        ok: true,
+        title: updated.title,
+        author: updated.author,
+        series: updated.series || "",
+        year: updated.year || null,
+        description: updated.description || "",
+        status: st.status || "queue",
+        isPrivate: !!updated.isPrivate,
       });
-      if (!result) return res.status(404).json({ error: "Книга не найдена" });
-      if (result.error) return res.status(result.status || 400).json({ error: result.error });
-      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/books/:id/progress", async (req, res) => {
+  app.put("/api/books/:id/progress", requireAuth, async (req, res) => {
     try {
-      const result = await withLibrary(() => {
-        const lib = loadLibrary();
-        const book = lib.find((b) => b.id === req.params.id);
-        if (!book) return null;
-
-        const { chapterIndex, charOffset, progress } = req.body || {};
-        if (typeof chapterIndex === "number") book.chapterIndex = chapterIndex;
-        if (typeof charOffset === "number") book.charOffset = charOffset;
-        if (typeof progress === "number") book.progress = Math.min(100, Math.max(0, progress));
-
-        if (book.progress >= 100) book.status = "finished";
-        else if (book.progress > 0 && book.status !== "finished") book.status = "reading";
-        else if (!book.status) book.status = "queue";
-
-        saveLibrary(lib);
-        return { ok: true, status: book.status };
-      });
-      if (!result) return res.status(404).json({ error: "Книга не найдена" });
-      res.json(result);
+      const book = db.getBookById(req.params.id);
+      if (!book || !canSeeBook(book, req.user)) return res.status(404).json({ error: "Книга не найдена" });
+      const fullUser = db.findUserById(req.user.id);
+      const st = db.getUserBookState(fullUser, book.id);
+      const { chapterIndex, charOffset, progress, lastTts } = req.body || {};
+      if (typeof chapterIndex === "number") st.chapterIndex = chapterIndex;
+      if (typeof charOffset === "number") st.charOffset = charOffset;
+      if (typeof progress === "number") st.progress = Math.min(100, Math.max(0, progress));
+      if (lastTts != null) st.lastTts = lastTts;
+      if (st.progress >= 100) st.status = "finished";
+      else if (st.progress > 0 && st.status !== "finished") st.status = "reading";
+      else if (!st.status) st.status = "queue";
+      db.setUserBookState(fullUser, book.id, st);
+      res.json({ ok: true, status: st.status, progress: st.progress });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/books/:id", async (req, res) => {
+  app.get("/api/books/:id/bookmarks", requireAuth, (req, res) => {
+    const book = db.getBookById(req.params.id);
+    if (!book || !canSeeBook(book, req.user)) return res.status(404).json({ error: "Не найдено" });
+    const fullUser = db.findUserById(req.user.id);
+    const st = db.getUserBookState(fullUser, book.id);
+    res.json({ bookmarks: st.bookmarks || [] });
+  });
+
+  app.post("/api/books/:id/bookmarks", requireAuth, async (req, res) => {
     try {
-      const ok = await withLibrary(() => {
-        const lib = loadLibrary();
-        const idx = lib.findIndex((b) => b.id === req.params.id);
-        if (idx === -1) return false;
+      const book = db.getBookById(req.params.id);
+      if (!book || !canSeeBook(book, req.user)) return res.status(404).json({ error: "Не найдено" });
+      const fullUser = db.findUserById(req.user.id);
+      const body = req.body || {};
+      const bm = {
+        id: uuidv4(),
+        chapterIndex: typeof body.chapterIndex === "number" ? body.chapterIndex : 0,
+        charOffset: typeof body.charOffset === "number" ? body.charOffset : 0,
+        label: String(body.label || "").slice(0, 200),
+        createdAt: Date.now(),
+      };
+      db.addBookmark(fullUser, book.id, bm);
+      const st = db.getUserBookState(fullUser, book.id);
+      res.json({ bookmark: bm, bookmarks: st.bookmarks || [] });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-        const book = lib[idx];
-        const filePath = getBookPath(book);
-        if (exists(filePath)) {
-          try { fs.unlinkSync(filePath); } catch (_) {}
-        }
-        const chaptersPath = path.join(BOOKS_DIR, book.id + ".chapters.json");
-        if (exists(chaptersPath)) {
-          try { fs.unlinkSync(chaptersPath); } catch (_) {}
-        }
-        if (book.coverFile) {
-          const cp = path.join(BOOKS_DIR, book.coverFile);
-          if (exists(cp)) {
-            try { fs.unlinkSync(cp); } catch (_) {}
-          }
-        }
+  app.delete("/api/books/:id/bookmarks/:bmId", requireAuth, async (req, res) => {
+    try {
+      const book = db.getBookById(req.params.id);
+      if (!book || !canSeeBook(book, req.user)) return res.status(404).json({ error: "Не найдено" });
+      const fullUser = db.findUserById(req.user.id);
+      db.deleteBookmark(fullUser, book.id, req.params.bmId);
+      const st = db.getUserBookState(fullUser, book.id);
+      res.json({ ok: true, bookmarks: st.bookmarks || [] });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-        lib.splice(idx, 1);
-        saveLibrary(lib);
-        return true;
-      });
-      if (!ok) return res.status(404).json({ error: "Книга не найдена" });
+  app.post("/api/books/bulk-delete", requireAuth, async (req, res) => {
+    try {
+      const ids = (req.body && req.body.ids) || [];
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ error: "Нужен массив ids" });
+      }
+      let removed = 0;
+      for (const id of ids) {
+        const book = db.getBookById(id);
+        if (!book) continue;
+        if (!canEditBook(book, req.user)) continue;
+        removeBookFiles(book);
+        db.deleteBook(id);
+        removed++;
+      }
+      res.json({ removed });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/books/:id", requireAuth, async (req, res) => {
+    try {
+      const book = db.getBookById(req.params.id);
+      if (!book) return res.status(404).json({ error: "Книга не найдена" });
+      if (!canEditBook(book, req.user)) return res.status(403).json({ error: "Нет прав на удаление" });
+      removeBookFiles(book);
+      db.deleteBook(book.id);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  
-  app.use("/api/tts", async (req, res) => {
+  app.use("/api/tts", requireAuth, async (req, res) => {
     const rawUrl = req.url || "/";
     const qIdx = rawUrl.indexOf("?");
     const targetPath = (qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl) || "/";
@@ -1118,14 +1263,27 @@ function startExpress() {
     res.sendFile(path.join(PUBLIC_DIR, "index.html"));
   });
 
-  app.listen(NODE_PORT, () => {
-    log("http://localhost:" + NODE_PORT);
+  const cfg = getAccessConfig();
+  const host = process.env.HOST || "0.0.0.0";
+  app.listen(NODE_PORT, host, () => {
+    log("http://127.0.0.1:" + NODE_PORT);
+    if (cfg.localhostOnly) log("режим: только localhost (middleware)");
+    else log("режим: сеть");
   });
 }
 
 async function main() {
   const setupOnly = process.argv.includes("--setup-only");
   ensureDir(BOOKS_DIR);
+
+  try {
+    const mig = db.migrateFromJson();
+    if (mig.migrated) {
+      log("migrated from JSON: users=" + mig.migratedUsers + " books=" + mig.migratedBooks + " states=" + mig.migratedStates);
+    }
+  } catch (e) {
+    log("migration skip: " + (e && e.message ? e.message : e));
+  }
 
   if (needsSetup()) {
     log("first-time setup (may take several minutes)...");

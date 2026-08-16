@@ -17,9 +17,28 @@ from ruaccent import RUAccent
 
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
+CACHE_MAX_FILES = 400
 
 SAMPLE_RATE = 48000
 AVAILABLE_SPEAKERS = ["xenia", "aidar", "eugene", "kseniya", "baya"]
+
+
+def prune_cache():
+    try:
+        files = sorted(
+            CACHE_DIR.glob("*.wav"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        extra = len(files) - CACHE_MAX_FILES
+        if extra <= 0:
+            return
+        for p in files[:extra]:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 print("AL: RUAccent...", flush=True)
 accentizer = RUAccent()
@@ -131,6 +150,7 @@ def tts(req: TTSRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     cache_path.write_bytes(data)
+    prune_cache()
 
     return Response(
         content=data,
