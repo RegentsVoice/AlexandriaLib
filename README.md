@@ -1,46 +1,109 @@
 <p align="center">
-  <img src="public/logo.png" alt="OPEN Booru" width="180" />
+  <img src="public/logo.png" alt="AlexandriaLib" width="160" />
 </p>
 
-# AlexandriaLib
+<h1 align="center">AlexandriaLib</h1>
 
-Локальная библиотека книг (TXT / FB2 / EPUB) с озвучкой Silero TTS и мультипользовательским доступом.
+<p align="center">
+  Self-hosted библиотека книг с читалкой и озвучкой Silero TTS<br/>
+  TXT · FB2 · EPUB · мультипользовательский доступ · PWA
+</p>
+
+---
+
+## Возможности
+
+- Загрузка **TXT / FB2 / EPUB**
+- Читалка: темы, ширина, прогресс, закладки (`B`)
+- **Silero TTS** с очередью и предзагрузкой
+- Личные и общие книги, фильтры, статусы
+- Аккаунты, админка, backup
+- SQLite (общая БД + отдельная на пользователя)
+- PWA
+
+---
+
+## Требования
+
+| | Минимум |
+|---|---|
+| Node.js | 18+ |
+| Python | 3.9+ |
+| Место | ~2–4 ГБ (модели TTS при первом запуске) |
+
+---
+
+## Автоустановка
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RegentsVoice/AlexandriaLib/main/scripts/install-linux.sh | bash
+```
+
+Или из клона репозитория:
+
+```bash
+bash scripts/install-linux.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/RegentsVoice/AlexandriaLib/main/scripts/install-windows.ps1 | iex
+```
+
+Или из клона:
+
+```powershell
+.\scripts\install-windows.ps1
+```
+
+Скрипт поставит зависимости, клонирует/обновит репозиторий (если нужно), выполнит `npm install` и `npm run setup`.
+
+---
+
+## Ручная установка
+
+```bash
+git clone https://github.com/RegentsVoice/AlexandriaLib.git
+cd AlexandriaLib
+
+npm install
+npm run setup
+npm start
+```
+
+Первый `npm run setup` скачает Python-зависимости и модели TTS — может занять несколько минут.
+
+---
 
 ## Запуск
 
 ```bash
-npm install
-node server.js
+npm start
 ```
 
-Откройте: http://127.0.0.1:8766
+Откройте: **http://127.0.0.1:8766**
 
 Первый зарегистрированный пользователь становится администратором.
 
-## Возможности
+Порт Node можно сменить: `PORT=9000 npm start`  
+TTS: `8765`
 
-- Загрузка TXT, FB2, EPUB
-- Читалка с пагинацией, темами, TTS
-- Учётки, сессии, смена пароля
-- Личные книги
-- Прогресс и статус на пользователя
-- Закладки
-- Admin: localhost/сеть, регистрация, пользователи, backup
-- Фильтры: мои / общие / личные
-- PWA
-- SQLite: общий core + отдельная БД на каждого пользователя
-
-## Порты
-
-- Node: 8766 (`PORT`)
-- TTS: 8765
-
-Сервер слушает 0.0.0.0; middleware «только localhost» настраивается в админке.
+---
 
 ## Данные
 
-- `books/` — файлы книг, обложки, `*.chapters.json`
-- `data/cXXXXXXXX.sqlite` — общая БД (users, books meta, sessions, config)
-- `data/udb/uXXXXXXXX.sqlite` — БД пользователя (progress, bookmarks)
-- `data/core.name` — имя файла общей БД
-- `data/session.secret`
+| Путь | Назначение |
+|------|------------|
+| `books/` | Файлы книг, обложки, главы |
+| `data/cXXXXXXXX.sqlite` | Общая БД |
+| `data/udb/uXXXXXXXX.sqlite` | БД пользователя |
+| `data/session.secret` | Секрет сессий |
+
+---
+
+## Лицензия
+
+[MIT](LICENSE)
