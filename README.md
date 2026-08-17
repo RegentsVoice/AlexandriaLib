@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.png" alt="OPEN Booru" width="180" />
+</p>
+
 # AlexandriaLib
 
 Локальная библиотека книг (TXT / FB2 / EPUB) с озвучкой Silero TTS и мультипользовательским доступом.
