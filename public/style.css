@@ -3509,6 +3509,9 @@ body.tts-pick-mode .sentence.picked {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.reader-bar-controls.hidden {
+  display: none !important;
+}
 .reader-bar-wave-wrap.hidden {
   display: none !important;
 }

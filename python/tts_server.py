@@ -1,6 +1,7 @@
 import os
 import io
 import hashlib
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -71,16 +72,86 @@ def get_cache_key(text: str, speaker: str, speed: float) -> str:
     raw = f"{text}|{speaker}|{speed:.2f}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+import re
+
+_ABBR_EXPAND = [
+    (re.compile(r"\bт\.\s*е\.", re.I), "то есть"),
+    (re.compile(r"\bт\.\s*д\.", re.I), "так далее"),
+    (re.compile(r"\bт\.\s*п\.", re.I), "тому подобное"),
+    (re.compile(r"\bт\.\s*к\.", re.I), "так как"),
+    (re.compile(r"\bт\.\s*н\.", re.I), "так называемый"),
+    (re.compile(r"\bи\s+т\.\s*д\.", re.I), "и так далее"),
+    (re.compile(r"\bи\s+т\.\s*п\.", re.I), "и тому подобное"),
+    (re.compile(r"\bн\.\s*э\.", re.I), "нашей эры"),
+    (re.compile(r"\bдо\s+н\.\s*э\.", re.I), "до нашей эры"),
+    (re.compile(r"\bпроф\.", re.I), "профессор"),
+    (re.compile(r"\bд-р\b", re.I), "доктор"),
+    (re.compile(r"\bим\.", re.I), "имени"),
+    (re.compile(r"\bруб\.", re.I), "рублей"),
+    (re.compile(r"\bкоп\.", re.I), "копеек"),
+    (re.compile(r"\bмлн\.", re.I), "миллионов"),
+    (re.compile(r"\bмлрд\.", re.I), "миллиардов"),
+    (re.compile(r"\bтыс\.", re.I), "тысяч"),
+    (re.compile(r"\bстр\.", re.I), "страница"),
+    (re.compile(r"\bрис\.", re.I), "рисунок"),
+    (re.compile(r"\bсм\.", re.I), "смотри"),
+]
+
+def normalize_for_tts(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    for ch in ["\x00", "\ufeff", "\u200b", "\u200c", "\u200d", "\ufeff"]:
+        t = t.replace(ch, "")
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    t = t.replace("\u00a0", " ")
+    for a, b in [
+        ("\u2026", "..."),
+        ("\u2022", ","),
+        ("\u2014", " — "),
+        ("\u2013", " — "),
+        ("\u2012", " — "),
+        ("\u2212", "-"),
+        ("\u00ab", "\""),
+        ("\u00bb", "\""),
+        ("\u201c", "\""),
+        ("\u201d", "\""),
+        ("\u201e", "\""),
+        ("\u2018", "'"),
+        ("\u2019", "'"),
+        ("\u00b4", "'"),
+        ("`", "'"),
+    ]:
+        t = t.replace(a, b)
+    t = re.sub(r"-{2,}", " — ", t)
+    t = re.sub(r"\.{4,}", "...", t)
+    t = re.sub(r"!{2,}", "!", t)
+    t = re.sub(r"\?{2,}", "?", t)
+    for rx, repl in _ABBR_EXPAND:
+        def _sub(m, _repl=repl):
+            s = m.string
+            i = m.start()
+            if i == 0 or (i > 0 and s[i - 1] in ".!?…\n"):
+                return _repl[:1].upper() + _repl[1:] if _repl else _repl
+            return _repl
+        t = rx.sub(_sub, t)
+    t = re.sub(r"([.!?…])([A-Za-zА-Яа-яЁё])", r"\1 \2", t)
+    t = re.sub(r"([,;:])([^\s\d])", r"\1 \2", t)
+    t = re.sub(r"\s*—\s*", " — ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    t = re.sub(r"\s+([,.;:!?…])", r"\1", t)
+    if t and t[-1] not in ".!?…:":
+        if re.search(r"[0-9A-Za-zА-Яа-яЁё]$", t):
+            t = t + "."
+    return t.strip()
+
 def synthesize(text: str, speaker: str = "xenia", speed: float = 1.0) -> bytes:
     if speaker not in AVAILABLE_SPEAKERS:
         raise ValueError(f"Неизвестный голос. Доступны: {AVAILABLE_SPEAKERS}")
 
-    text = (text or "").strip()
+    text = normalize_for_tts(text or "")
     if not text:
         raise ValueError("Пустой текст")
-
-    for ch in ["\x00", "\ufeff"]:
-        text = text.replace(ch, "")
 
     try:
         text_with_stress = accentizer.process_all(text)
@@ -133,7 +204,10 @@ def health():
 
 @app.post("/tts")
 def tts(req: TTSRequest):
-    cache_key = get_cache_key(req.text, req.speaker, req.speed)
+    normalized = normalize_for_tts(req.text)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Пустой текст")
+    cache_key = get_cache_key(normalized, req.speaker, req.speed)
     cache_path = CACHE_DIR / f"{cache_key}.wav"
 
     if cache_path.exists():
@@ -145,7 +219,7 @@ def tts(req: TTSRequest):
         )
 
     try:
-        data = synthesize(req.text, req.speaker, req.speed)
+        data = synthesize(normalized, req.speaker, req.speed)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -12,6 +12,11 @@ let pageMetrics = {
 let pageCursor = { ch: 0, u: 0 };
 let pageNextCursor = null;
 let pageHistory = [];
+let readingAnchor = { ch: 0, u: 0 };
+let readingCursor = { ch: 0, u: 0 };
+let bookPageList = [];
+let pageLayoutKey = "";
+let pageIndex = 0;
 let chapterUnitsCache = new Map();
 let pageWheelLock = 0;
 let pageTouch = null;
@@ -40,7 +45,6 @@ function bindReaderHeaderAutoHide() {
         setHeaderHidden(false);
       } else if (dy > 8) {
         setHeaderHidden(true);
-        
       } else if (dy < -8) {
         setHeaderHidden(false);
       }
@@ -62,7 +66,7 @@ function getLayoutMode() {
 }
 
 function isTtsActivelyPlaying() {
-  return !ttsStopped && isSpeaking && ttsAudio && !ttsAudio.paused;
+  return typeof ttsStopped !== "undefined" && !ttsStopped && typeof isSpeaking !== "undefined" && isSpeaking && ttsAudio && !ttsAudio.paused;
 }
 
 function canTurnPages() {
@@ -77,11 +81,232 @@ function useSpread() {
   return window.innerWidth >= 900;
 }
 
+function cursorBefore(a, b) {
+  const ac = a?.ch || 0;
+  const bc = b?.ch || 0;
+  if (ac !== bc) return ac < bc;
+  return (a?.u || 0) < (b?.u || 0);
+}
+
+function getLayoutDims() {
+  const wrap = document.querySelector(".reader-view-wrap");
+  if (!wrap) return null;
+  const pad = getPagePadding();
+  const wrapW = wrap.clientWidth;
+  const wrapH = wrap.clientHeight;
+  if (wrapW < 60 || wrapH < 60) return null;
+  const spread = useSpread();
+  const pageW = spread
+    ? Math.floor((wrapW - pad.x * 2 - pad.gap) / 2)
+    : wrapW - pad.x * 2;
+  const pageH = wrapH - pad.y - pad.bottom;
+  return { pad, wrapW, wrapH, spread, pageW, pageH };
+}
+
+function layoutKeyFromDims(d) {
+  if (!d) return "";
+  return [
+    d.pageW,
+    d.pageH,
+    d.spread ? 1 : 0,
+    settings?.fontSize || 18,
+    settings?.lineHeight || 1.65,
+  ].join("x");
+}
+
+function clearBookPages() {
+  bookPageList = [];
+  pageIndex = 0;
+  pageNextCursor = null;
+  pageHistory = [];
+}
+
+function appendNextPage(dims) {
+  if (!dims || !currentBook) return false;
+  let start;
+  if (!bookPageList.length) {
+    start = { ch: 0, u: 0 };
+  } else {
+    const last = bookPageList[bookPageList.length - 1];
+    if (!last.next) return false;
+    start = { ch: last.next.ch, u: last.next.u };
+  }
+  const packed = packPageFromCursor(start, dims.pageW, dims.pageH);
+  bookPageList.push({
+    ch: start.ch,
+    u: start.u,
+    html: packed.html || "",
+    chapterIndex: packed.chapterIndex || start.ch,
+    next: packed.next || null,
+  });
+  return true;
+}
+
+function pageContainsUnit(page, ch, u) {
+  if (!page) return false;
+  const pos = { ch: ch || 0, u: u || 0 };
+  const start = { ch: page.ch || 0, u: page.u || 0 };
+  if (cursorBefore(pos, start)) return false;
+  if (!page.next) return true;
+  return cursorBefore(pos, page.next);
+}
+
+function ensureLayoutPages(dims) {
+  dims = dims || getLayoutDims();
+  if (!dims) return null;
+  const key = layoutKeyFromDims(dims);
+  if (key !== pageLayoutKey) {
+    clearBookPages();
+    pageLayoutKey = key;
+  }
+  return dims;
+}
+
+function seekToUnit(ch, u, dims) {
+  dims = ensureLayoutPages(dims);
+  if (!dims || !currentBook) return;
+  ch = Math.max(0, ch || 0);
+  u = Math.max(0, u || 0);
+
+  for (let i = 0; i < bookPageList.length; i++) {
+    if (pageContainsUnit(bookPageList[i], ch, u)) {
+      pageIndex = i;
+      return;
+    }
+  }
+
+  if (bookPageList.length) {
+    const first = bookPageList[0];
+    if (cursorBefore({ ch, u }, { ch: first.ch, u: first.u })) {
+      clearBookPages();
+    }
+  }
+
+  let guard = 0;
+  while (guard++ < 100000) {
+    if (!bookPageList.length) {
+      if (!appendNextPage(dims)) break;
+    }
+    const idx = bookPageList.length - 1;
+    const last = bookPageList[idx];
+    if (pageContainsUnit(last, ch, u)) {
+      pageIndex = idx;
+      return;
+    }
+    if (cursorBefore({ ch, u }, { ch: last.ch, u: last.u })) {
+      for (let i = 0; i < bookPageList.length; i++) {
+        if (pageContainsUnit(bookPageList[i], ch, u)) {
+          pageIndex = i;
+          return;
+        }
+      }
+      pageIndex = 0;
+      return;
+    }
+    if (!last.next) {
+      pageIndex = idx;
+      return;
+    }
+    if (!appendNextPage(dims)) {
+      pageIndex = bookPageList.length - 1;
+      return;
+    }
+  }
+  pageIndex = Math.max(0, bookPageList.length - 1);
+}
+
+function findPageIndexForSentence(ch, si) {
+  const u = typeof findUnitIndexForSentence === "function"
+    ? findUnitIndexForSentence(ch, si)
+    : 0;
+  const dims = ensureLayoutPages();
+  if (!dims) return 0;
+  seekToUnit(ch, u, dims);
+  return pageIndex;
+}
+
+function markReadingAnchor(ch, u) {
+  readingAnchor = {
+    ch: Number.isFinite(ch) ? ch : 0,
+    u: Number.isFinite(u) ? u : 0,
+  };
+  readingCursor = { ch: readingAnchor.ch, u: readingAnchor.u };
+}
+
 function resetPageCursors(ch, u) {
   pageCursor = { ch: ch || 0, u: u || 0 };
   pageNextCursor = null;
   pageHistory = [];
   pageMetrics.pageIndex = 0;
+  clearBookPages();
+  pageLayoutKey = "";
+}
+
+function markReadingCursor(ch, u) {
+  markReadingAnchor(ch, u);
+}
+
+function restoreReadingView() {
+  const ch = readingAnchor.ch || 0;
+  const u = readingAnchor.u || 0;
+  seekToUnit(ch, u);
+  showPageAtIndex(pageIndex, false);
+}
+
+function showPageAtIndex(index, updateReading) {
+  const dims = ensureLayoutPages();
+  if (!dims || !currentBook) return;
+  if (!bookPageList.length) {
+    appendNextPage(dims);
+  }
+  if (!bookPageList.length) {
+    pageMetrics.pages = ["<p></p>"];
+    pageMetrics.pageIndex = 0;
+    pageMetrics.pageCount = 1;
+    renderCurrentScreen();
+    return;
+  }
+
+  const step = dims.spread ? 2 : 1;
+  index = Math.max(0, index || 0);
+
+  while (bookPageList.length <= index + (dims.spread ? 1 : 0)) {
+    const last = bookPageList[bookPageList.length - 1];
+    if (!last || !last.next) break;
+    if (!appendNextPage(dims)) break;
+  }
+
+  if (index >= bookPageList.length) index = bookPageList.length - 1;
+  if (dims.spread && index > 0 && index % 2 === 1) index -= 1;
+  pageIndex = Math.max(0, index);
+
+  const left = bookPageList[pageIndex];
+  let rightHtml = "";
+  if (dims.spread) {
+    if (pageIndex + 1 >= bookPageList.length && left.next) {
+      appendNextPage(dims);
+    }
+    if (bookPageList[pageIndex + 1]) {
+      rightHtml = bookPageList[pageIndex + 1].html;
+    }
+  }
+
+  pageMetrics.pages = dims.spread && rightHtml ? [left.html, rightHtml] : [left.html];
+  pageMetrics.pageIndex = pageIndex;
+  pageMetrics.pageCount = Math.max(1, estimateBookPages(currentBook));
+  pageMetrics.chapterIndex = left.chapterIndex;
+  pageMetrics.mode = "pages";
+  currentChapterIndex = left.chapterIndex;
+  pageCursor = { ch: left.ch, u: left.u };
+  pageNextCursor = dims.spread && bookPageList[pageIndex + 1]
+    ? bookPageList[pageIndex + 1].next
+    : left.next;
+
+  if (updateReading) {
+    markReadingAnchor(left.ch, left.u);
+  }
+
+  renderCurrentScreen();
 }
 
 function applyLayoutMode() {
@@ -98,7 +323,10 @@ function applyLayoutMode() {
   pageMetrics.mode = "pages";
   content.style.cssText = "";
 
-  buildChapterPages(true);
+  pageLayoutKey = "";
+  const anchor = readingAnchor || pageCursor || { ch: 0, u: 0 };
+  seekToUnit(anchor.ch || 0, anchor.u || 0);
+  showPageAtIndex(pageIndex, false);
   bindPagedNavigation();
 }
 
@@ -393,42 +621,19 @@ function packPageFromCursor(cursor, pageW, pageH) {
 }
 
 function buildChapterPages(keepPage) {
-  const wrap = document.querySelector(".reader-view-wrap");
-  if (!wrap || !currentBook) return;
-
-  const pad = getPagePadding();
-  const wrapW = wrap.clientWidth;
-  const wrapH = wrap.clientHeight;
-  if (wrapW < 60 || wrapH < 60) return;
-
-  const spread = useSpread();
-  const pageW = spread
-    ? Math.floor((wrapW - pad.x * 2 - pad.gap) / 2)
-    : wrapW - pad.x * 2;
-  const pageH = wrapH - pad.y - pad.bottom;
-
+  if (!currentBook) return;
+  const dims = ensureLayoutPages();
+  if (!dims) return;
   if (!keepPage) {
-    resetPageCursors(currentChapterIndex || 0, 0);
-  } else if (!pageHistory.length && pageCursor.ch === 0 && pageCursor.u === 0) {
-    resetPageCursors(currentChapterIndex || 0, 0);
+    clearBookPages();
+    pageLayoutKey = layoutKeyFromDims(dims);
+    seekToUnit(currentChapterIndex || 0, 0, dims);
+    showPageAtIndex(pageIndex, true);
+    return;
   }
-
-  const left = packPageFromCursor(pageCursor, pageW, pageH);
-  let rightHtml = "";
-  let next = left.next;
-  if (spread && left.next) {
-    const right = packPageFromCursor(left.next, pageW, pageH);
-    rightHtml = right.html;
-    next = right.next;
-  }
-  pageNextCursor = next;
-  currentChapterIndex = left.chapterIndex;
-  pageMetrics.chapterIndex = left.chapterIndex;
-  pageMetrics.pages = spread ? [left.html, rightHtml] : [left.html];
-  pageMetrics.pageCount = Math.max(1, estimateBookPages(currentBook));
-  pageMetrics.mode = "pages";
-
-  renderCurrentScreen();
+  const anchor = readingAnchor || pageCursor || { ch: currentChapterIndex || 0, u: 0 };
+  seekToUnit(anchor.ch || 0, anchor.u || 0, dims);
+  showPageAtIndex(pageIndex, false);
 }
 
 function renderCurrentScreen() {
@@ -436,7 +641,8 @@ function renderCurrentScreen() {
   if (!content) return;
 
   const pad = getPagePadding();
-  const spread = useSpread() && pageMetrics.pages.length > 1;
+  const dims = getLayoutDims();
+  const spread = !!(dims && dims.spread && pageMetrics.pages.length > 1);
   const left = pageMetrics.pages[0] || "";
   const right = pageMetrics.pages[1] || "";
 
@@ -461,61 +667,47 @@ function renderCurrentScreen() {
 function turnPage(dir) {
   if (!canTurnPages()) return;
   if (!currentBook) return;
+  const dims = ensureLayoutPages();
+  if (!dims) return;
+  if (!bookPageList.length) {
+    seekToUnit(readingAnchor.ch || 0, readingAnchor.u || 0, dims);
+    if (!bookPageList.length) appendNextPage(dims);
+  }
+  if (!bookPageList.length) return;
+  const step = dims.spread ? 2 : 1;
 
   if (dir > 0) {
-    if (!pageNextCursor) return;
-    pageHistory.push({ ch: pageCursor.ch, u: pageCursor.u });
-    pageCursor = { ch: pageNextCursor.ch, u: pageNextCursor.u };
-    pageMetrics.pageIndex = (pageMetrics.pageIndex || 0) + 1;
-    buildChapterPages(true);
+    const target = pageIndex + step;
+    while (bookPageList.length <= target) {
+      const last = bookPageList[bookPageList.length - 1];
+      if (!last || !last.next) break;
+      if (!appendNextPage(dims)) break;
+    }
+    if (target >= bookPageList.length) return;
+    showPageAtIndex(target, true);
     return;
   }
 
   if (dir < 0) {
-    if (pageHistory.length) {
-      pageCursor = pageHistory.pop();
-      pageMetrics.pageIndex = Math.max(0, (pageMetrics.pageIndex || 0) - 1);
-      buildChapterPages(true);
-      return;
-    }
-    const wrap = document.querySelector(".reader-view-wrap");
-    if (!wrap) return;
-    const pad = getPagePadding();
-    const wrapW = wrap.clientWidth;
-    const wrapH = wrap.clientHeight;
-    if (wrapW < 60 || wrapH < 60) return;
-    const spread = useSpread();
-    const pageW = spread
-      ? Math.floor((wrapW - pad.x * 2 - pad.gap) / 2)
-      : wrapW - pad.x * 2;
-    const pageH = wrapH - pad.y - pad.bottom;
-    let prev = findPrevPageCursor(pageCursor, pageW, pageH);
-    if (!prev) return;
-    if (spread) {
-      const prev2 = findPrevPageCursor(prev, pageW, pageH);
-      if (prev2) prev = prev2;
-    }
-    pageCursor = { ch: prev.ch, u: prev.u };
-    pageMetrics.pageIndex = Math.max(0, (pageMetrics.pageIndex || 0) - 1);
-    buildChapterPages(true);
+    if (pageIndex <= 0) return;
+    showPageAtIndex(Math.max(0, pageIndex - step), true);
   }
 }
 
 function goToPage(index) {
   if (!currentBook) return;
   index = Math.max(0, index || 0);
-  resetPageCursors(0, 0);
-  pageMetrics.pageIndex = 0;
-  buildChapterPages(true);
-  let guard = 0;
-  while (pageMetrics.pageIndex < index && pageNextCursor && guard < index + 2) {
-    pageHistory.push({ ch: pageCursor.ch, u: pageCursor.u });
-    pageCursor = { ch: pageNextCursor.ch, u: pageNextCursor.u };
-    pageMetrics.pageIndex++;
-    buildChapterPages(true);
-    guard++;
-    if (!pageNextCursor) break;
+  const dims = ensureLayoutPages();
+  if (!dims) return;
+  clearBookPages();
+  pageLayoutKey = layoutKeyFromDims(dims);
+  while (bookPageList.length <= index) {
+    const last = bookPageList[bookPageList.length - 1];
+    if (bookPageList.length && (!last || !last.next)) break;
+    if (!appendNextPage(dims)) break;
+    if (bookPageList.length > index + 5) break;
   }
+  showPageAtIndex(Math.min(index, Math.max(0, bookPageList.length - 1)), true);
 }
 
 function estimateCharsPerPage() {
@@ -553,7 +745,11 @@ function updatePageIndicator() {
       const chTotal = currentBook?.chapters?.length || 1;
       el.textContent = `гл. ${ch}/${chTotal}`;
     } else {
-      const total = estimateBookPages(currentBook);
+      const total = Math.max(
+        estimateBookPages(currentBook),
+        bookPageList.length || 1,
+        (pageMetrics.pageIndex || 0) + 1
+      );
       const cur = Math.min(total, (pageMetrics.pageIndex || 0) + 1);
       el.textContent = `${cur} / ${total}`;
     }
@@ -647,16 +843,7 @@ async function openBook(id) {
     if (u < 0) u = 0;
     if (units.length && u >= units.length) u = Math.max(0, units.length - 1);
     resetPageCursors(ch, u);
-    const totalPages = estimateBookPages(currentBook);
-    const prog = Math.min(100, Math.max(0, Number(currentBook.progress) || 0));
-    if (prog >= 100) {
-      pageMetrics.pageIndex = Math.max(0, totalPages - 1);
-    } else if (prog > 0) {
-      pageMetrics.pageIndex = Math.max(
-        0,
-        Math.min(totalPages - 1, Math.round((prog / 100) * totalPages))
-      );
-    }
+    markReadingAnchor(ch, u);
 
     $("#libraryView").classList.add("hidden");
     $("#bookDetailView").classList.add("hidden");
@@ -675,10 +862,44 @@ async function openBook(id) {
 }
 
 function splitSentences(text) {
-  
-  const re = /[^.!?…]+(?:[.!?…]+(?:["»”']+)?)?[ \t]*|[^.!?…\n]+/g;
-  const parts = text.match(re) || [text];
-  return parts.map((s) => s.trim()).filter((s) => s.length > 0);
+  let raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return [];
+
+  const protected = [];
+  raw = raw.replace(
+    /(?<![А-Яа-яЁёA-Za-z0-9])(?:т\.\s*[едпкн]\.|и\s+т\.\s*[дп]\.|н\.\s*э\.|до\s+н\.\s*э\.|проф\.|д-р|им\.|руб\.|коп\.|млн\.|млрд\.|тыс\.|стр\.|рис\.|см\.|ул\.|пр\.|пер\.|гг\.|вв\.|др\.)(?![А-Яа-яЁёA-Za-z0-9])|\d+[.,]\d+|(?<![А-Яа-яЁёA-Za-z0-9])(?:[A-Za-zА-Яа-яЁё]\.){1,4}(?=[\s,;:»"']|$)/gi,
+    (m) => {
+      const key = "\uE000" + protected.length + "\uE001";
+      protected.push(m);
+      return key;
+    }
+  );
+
+  const re = /[^.!?…]+(?:[.!?…]+(?:["»”']*)?)?|[^.!?…]+/g;
+  let parts = raw.match(re) || [raw];
+  parts = parts
+    .map((s) => {
+      let t = s.trim();
+      for (let i = 0; i < protected.length; i++) {
+        t = t.split("\uE000" + i + "\uE001").join(protected[i]);
+      }
+      return t.trim();
+    })
+    .filter((s) => s.length > 0);
+
+  const merged = [];
+  for (let i = 0; i < parts.length; i++) {
+    const cur = parts[i];
+    const prev = merged.length ? merged[merged.length - 1] : "";
+    const curShort = cur.length < 12;
+    const prevShort = prev.length > 0 && prev.length < 12;
+    if (merged.length && (curShort || prevShort) && !/^[—\-–]/.test(cur)) {
+      merged[merged.length - 1] = prev + " " + cur;
+      continue;
+    }
+    merged.push(cur);
+  }
+  return merged;
 }
 
 function formatChapterText(text, chapterIndex) {
@@ -705,7 +926,13 @@ function renderChapters() {
 function scrollToChapter(index, smooth = true) {
   currentChapterIndex = index;
   resetPageCursors(index, 0);
-  buildChapterPages(true);
+  markReadingAnchor(index, 0);
+  const dims = ensureLayoutPages();
+  if (dims) {
+    pageLayoutKey = layoutKeyFromDims(dims);
+    seekToUnit(index, 0, dims);
+    showPageAtIndex(pageIndex, true);
+  }
   saveProgressDebounced();
 }
 
@@ -823,8 +1050,16 @@ function saveProgressDebounced() {
 async function saveProgress() {
   if (!currentBook) return;
   const totalCh = Math.max(1, currentBook.chapters?.length || 1);
-  const ch = Number.isFinite(pageCursor?.ch) ? pageCursor.ch : currentChapterIndex || 0;
-  const u = Number.isFinite(pageCursor?.u) ? pageCursor.u : 0;
+  const ch = Number.isFinite(readingAnchor?.ch)
+    ? readingAnchor.ch
+    : Number.isFinite(pageCursor?.ch)
+      ? pageCursor.ch
+      : currentChapterIndex || 0;
+  const u = Number.isFinite(readingAnchor?.u)
+    ? readingAnchor.u
+    : Number.isFinite(pageCursor?.u)
+      ? pageCursor.u
+      : 0;
   const units = typeof chapterUnits === "function" ? chapterUnits(ch) : [];
   const totalU = Math.max(1, units.length || 1);
   const frac = Math.min(1, Math.max(0, u / totalU));
@@ -854,11 +1089,27 @@ async function saveProgress() {
   } catch (_) {}
 }
 
+function flushProgressNow() {
+  if (!currentBook) return;
+  clearTimeout(progressTimer);
+  try {
+    saveProgress();
+  } catch (_) {}
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushProgressNow();
+});
+window.addEventListener("pagehide", flushProgressNow);
+
+
 $("#readerContent")?.addEventListener("scroll", () => {
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
     if (!currentBook) return;
+    if (pageMetrics.mode === "pages") return;
     const chapters = $$(".chapter");
+    if (!chapters.length) return;
     let closest = 0;
     let minDist = Infinity;
     const scrollTop = $("#readerContent").scrollTop;

@@ -38,10 +38,12 @@ function updateReaderBarTts() {
   const active = !ttsStopped;
   const showMini = !settings || settings.showMiniPlayer !== false;
   const showWave = !settings || settings.showWaveform !== false;
-  bar.classList.toggle("hidden", !active || !showMini);
+  bar.classList.toggle("hidden", !active || (!showMini && !showWave));
   const waveWrap = bar.querySelector(".reader-bar-wave-wrap");
   if (waveWrap) waveWrap.classList.toggle("hidden", !showWave);
-  if (active && showMini && showWave) startWaveform();
+  const controls = bar.querySelector(".reader-bar-controls");
+  if (controls) controls.classList.toggle("hidden", !showMini);
+  if (active && showWave) startWaveform();
   else stopWaveform();
 }
 
@@ -348,10 +350,14 @@ function ensureSentencePageVisible(ch, si) {
   if (document.querySelector(`.sentence[data-ch="${ch}"][data-si="${si}"]`)) return;
   currentChapterIndex = ch;
   const u = findUnitIndexForSentence(ch, si);
+  if (typeof seekToUnit === "function" && typeof showPageAtIndex === "function") {
+    seekToUnit(ch, u);
+    showPageAtIndex(pageIndex, false);
+    return;
+  }
   pageHistory = [];
   pageCursor = { ch, u };
-  pageMetrics.pageIndex = Math.max(0, pageMetrics.pageIndex || 0);
-  buildChapterPages(true);
+  if (typeof buildChapterPages === "function") buildChapterPages(true);
 }
 
 function highlightSentence(ch, si) {
@@ -402,10 +408,20 @@ function getTtsSpeed() {
 }
 
 function sanitizeTtsText(text) {
-  let t = String(text || "").replace(/\s+/g, " ").trim();
+  let t = String(text || "");
+  t = t.replace(/[\u0000\ufeff\u200b\u200c\u200d]/g, "");
+  t = t.replace(/\u00a0/g, " ");
+  t = t.replace(/[\u2014\u2013\u2012]/g, " — ");
+  t = t.replace(/\u2026/g, "...");
+  t = t.replace(/[\u00ab\u00bb\u201c\u201d\u201e]/g, '"');
+  t = t.replace(/[\u2018\u2019\u00b4]/g, "'");
+  t = t.replace(/\s*—\s*/g, " — ");
+  t = t.replace(/\s+/g, " ").trim();
+  t = t.replace(/\s+([,.;:!?…])/g, "$1");
   if (!t) return "";
   if (t.length > 800) t = t.slice(0, 800);
   if (!/[0-9A-Za-zА-Яа-яЁё]/.test(t)) return "";
+  if (!/[.!?…:]$/.test(t) && /[0-9A-Za-zА-Яа-яЁё]$/.test(t)) t = t + ".";
   return t;
 }
 
@@ -583,6 +599,12 @@ async function playAt(pos, gen) {
     currentBook.lastTts = { ch: item.ch, si: item.si };
   }
   saveProgressDebounced();
+  if (typeof saveProgress === "function") {
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => {
+      saveProgress();
+    }, 400);
+  }
 
   if (ttsStatus) ttsStatus.textContent = `${pos + 1} / ${ttsSentences.length}`;
 
@@ -722,18 +744,56 @@ function collectFromVisiblePage() {
   return collectFromPick(ch, si, text);
 }
 
+function collectFromResume(ch, si) {
+  const nCh = currentBook?.chapters?.length || 0;
+  if (!nCh) return [];
+  ch = Math.max(0, Math.min(nCh - 1, Number(ch) || 0));
+  si = Number(si);
+  if (!Number.isFinite(si) || si < 0) si = 0;
+
+  let all = collectSentencesFromChapter(ch);
+  if (!all.length) {
+    for (let c = ch + 1; c < nCh; c++) {
+      all = collectSentencesFromChapter(c);
+      if (all.length) return all;
+    }
+    return [];
+  }
+
+  let start = all.findIndex((s) => s.si === si);
+  if (start < 0) {
+    start = 0;
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].si <= si) start = i;
+      if (all[i].si >= si) {
+        start = i;
+        break;
+      }
+    }
+  }
+
+  const rest = all.slice(start);
+  if (rest.length) return rest;
+
+  for (let c = ch + 1; c < nCh; c++) {
+    all = collectSentencesFromChapter(c);
+    if (all.length) return all;
+  }
+  return [];
+}
+
 function startTtsFromLastOrChapter() {
   const lt = typeof currentBook !== "undefined" && currentBook && currentBook.lastTts;
   if (lt && lt.ch != null && lt.si != null) {
     const ch = Number(lt.ch);
     const si = Number(lt.si);
     if (Number.isFinite(ch) && Number.isFinite(si)) {
-      try {
-        ensureSentencePageVisible(ch, si);
-      } catch (_) {}
-      const list = collectFromPick(ch, si, null);
+      const list = collectFromResume(ch, si);
       if (list && list.length) {
         ttsPicked = null;
+        try {
+          ensureSentencePageVisible(list[0].ch, list[0].si);
+        } catch (_) {}
         beginQueue(list);
         return;
       }
@@ -931,9 +991,26 @@ function finishTts() {
   if (ttsStatus) ttsStatus.textContent = ttsPos >= ttsSentences.length - 1 ? "Готово" : "";
   clearHighlight();
   if (!ttsPanelOpen) document.body.classList.remove("tts-pick-mode");
+  if (typeof restoreReadingView === "function") {
+    try {
+      restoreReadingView();
+    } catch (_) {}
+  }
 }
 
 function stopTts(updateUi = true) {
+  if (
+    typeof currentBook !== "undefined" &&
+    currentBook &&
+    ttsSentences.length &&
+    ttsPos >= 0 &&
+    ttsPos < ttsSentences.length
+  ) {
+    const cur = ttsSentences[ttsPos];
+    if (cur && cur.ch != null && cur.si != null) {
+      currentBook.lastTts = { ch: cur.ch, si: cur.si };
+    }
+  }
   ttsGeneration++;
   ttsStopped = true;
   isSpeaking = false;
@@ -958,6 +1035,11 @@ function stopTts(updateUi = true) {
     if (ttsStatus) ttsStatus.textContent = "";
     clearHighlight();
     if (!ttsPanelOpen) document.body.classList.remove("tts-pick-mode");
+    if (typeof restoreReadingView === "function") {
+      try {
+        restoreReadingView();
+      } catch (_) {}
+    }
   }
 }
 
