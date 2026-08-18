@@ -11,6 +11,7 @@ data/
 
 # Python
 python/.venv/
+python/cache/
 python/.torch/
 python/.hf/
 python/.setup-ok
