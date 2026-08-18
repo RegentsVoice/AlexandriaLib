@@ -191,6 +191,106 @@ function advanceCursor(ch, u) {
   return null;
 }
 
+function collectUnitsBefore(ch, u, limit) {
+  const out = [];
+  let c = Math.max(0, ch || 0);
+  let i = (u || 0) - 1;
+  while (out.length < limit && c >= 0) {
+    const units = chapterUnits(c);
+    if (!units.length) {
+      c--;
+      if (c >= 0) {
+        const prev = chapterUnits(c);
+        i = prev.length - 1;
+      }
+      continue;
+    }
+    if (i < 0) {
+      c--;
+      if (c >= 0) {
+        const prev = chapterUnits(c);
+        i = prev.length - 1;
+      }
+      continue;
+    }
+    while (i >= 0 && out.length < limit) {
+      out.push({ unit: units[i], ch: c, u: i });
+      i--;
+    }
+    if (i < 0) {
+      c--;
+      if (c >= 0) {
+        const prev = chapterUnits(c);
+        i = prev.length - 1;
+      }
+    }
+  }
+  out.reverse();
+  return out;
+}
+
+function findPrevPageCursor(cursor, pageW, pageH) {
+  if (!cursor) return null;
+  if ((cursor.ch || 0) === 0 && (cursor.u || 0) === 0) return null;
+  const before = collectUnitsBefore(cursor.ch, cursor.u, 800);
+  if (!before.length) return null;
+
+  if (pageW < 80 || pageH < 80) {
+    return { ch: before[0].ch, u: before[0].u };
+  }
+
+  const measure = document.createElement("div");
+  measure.className = "page-measure page-panel";
+  measure.style.cssText = [
+    "position:absolute",
+    "left:-99999px",
+    "top:0",
+    "visibility:hidden",
+    "pointer-events:none",
+    `width:${Math.floor(pageW)}px`,
+    `height:${Math.floor(pageH)}px`,
+    "overflow:hidden",
+    "box-sizing:border-box",
+    "margin:0",
+    "padding:0",
+    `font-size:${settings.fontSize || 18}px`,
+    `line-height:${settings.lineHeight || 1.65}`,
+    'font-family:var(--font-read, Georgia, "Times New Roman", serif)',
+  ].join(";");
+  document.body.appendChild(measure);
+
+  const units = before.map((b) => b.unit);
+  const n = units.length;
+  const fits = (from) => {
+    measure.innerHTML = unitsToHtml(units.slice(from));
+    void measure.offsetHeight;
+    return measure.scrollHeight <= measure.clientHeight + 1;
+  };
+
+  if (!fits(n - 1)) {
+    measure.remove();
+    const last = before[n - 1];
+    return { ch: last.ch, u: last.u };
+  }
+
+  let lo = 0;
+  let hi = n - 1;
+  let best = n - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(mid)) {
+      best = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+
+  measure.remove();
+  const start = before[best];
+  return { ch: start.ch, u: start.u };
+}
+
 function unitsToHtml(list) {
   let html = "";
   let openP = false;
@@ -372,8 +472,30 @@ function turnPage(dir) {
   }
 
   if (dir < 0) {
-    if (!pageHistory.length) return;
-    pageCursor = pageHistory.pop();
+    if (pageHistory.length) {
+      pageCursor = pageHistory.pop();
+      pageMetrics.pageIndex = Math.max(0, (pageMetrics.pageIndex || 0) - 1);
+      buildChapterPages(true);
+      return;
+    }
+    const wrap = document.querySelector(".reader-view-wrap");
+    if (!wrap) return;
+    const pad = getPagePadding();
+    const wrapW = wrap.clientWidth;
+    const wrapH = wrap.clientHeight;
+    if (wrapW < 60 || wrapH < 60) return;
+    const spread = useSpread();
+    const pageW = spread
+      ? Math.floor((wrapW - pad.x * 2 - pad.gap) / 2)
+      : wrapW - pad.x * 2;
+    const pageH = wrapH - pad.y - pad.bottom;
+    let prev = findPrevPageCursor(pageCursor, pageW, pageH);
+    if (!prev) return;
+    if (spread) {
+      const prev2 = findPrevPageCursor(prev, pageW, pageH);
+      if (prev2) prev = prev2;
+    }
+    pageCursor = { ch: prev.ch, u: prev.u };
     pageMetrics.pageIndex = Math.max(0, (pageMetrics.pageIndex || 0) - 1);
     buildChapterPages(true);
   }
@@ -525,6 +647,16 @@ async function openBook(id) {
     if (u < 0) u = 0;
     if (units.length && u >= units.length) u = Math.max(0, units.length - 1);
     resetPageCursors(ch, u);
+    const totalPages = estimateBookPages(currentBook);
+    const prog = Math.min(100, Math.max(0, Number(currentBook.progress) || 0));
+    if (prog >= 100) {
+      pageMetrics.pageIndex = Math.max(0, totalPages - 1);
+    } else if (prog > 0) {
+      pageMetrics.pageIndex = Math.max(
+        0,
+        Math.min(totalPages - 1, Math.round((prog / 100) * totalPages))
+      );
+    }
 
     $("#libraryView").classList.add("hidden");
     $("#bookDetailView").classList.add("hidden");
