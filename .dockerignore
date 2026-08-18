@@ -1,0 +1,17 @@
+.git
+.gitignore
+node_modules
+books
+data
+python/.venv
+python/.torch
+python/.hf
+python/.setup-ok
+*.sqlite
+*.zip
+*.md
+scripts
+LICENSE
+Dockerfile
+.dockerignore
+docker-compose.yml

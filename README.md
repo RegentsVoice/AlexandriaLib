@@ -93,6 +93,31 @@ TTS: `8765`
 
 ---
 
+
+---
+
+## Docker
+
+```bash
+docker compose up -d --build
+```
+
+Откройте: **http://127.0.0.1:8766**
+
+Первый запуск скачает модели TTS (2–4 ГБ) — может занять несколько минут. Данные и модели хранятся в Docker volumes.
+
+Только Dockerfile:
+
+```bash
+docker build -t alexandria-lib .
+docker run -d -p 8766:8766 \
+  -v alexandria-books:/app/books \
+  -v alexandria-data:/app/data \
+  -v alexandria-torch:/app/python/.torch \
+  -v alexandria-hf:/app/python/.hf \
+  --name alexandria-lib alexandria-lib
+```
+
 ## Данные
 
 | Путь | Назначение |

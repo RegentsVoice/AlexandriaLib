@@ -1,0 +1,22 @@
+services:
+  alexandria:
+    build: .
+    image: alexandria-lib:latest
+    container_name: alexandria-lib
+    ports:
+      - "8766:8766"
+    volumes:
+      - alexandria-books:/app/books
+      - alexandria-data:/app/data
+      - alexandria-torch:/app/python/.torch
+      - alexandria-hf:/app/python/.hf
+    environment:
+      - PORT=8766
+      - HOST=0.0.0.0
+    restart: unless-stopped
+
+volumes:
+  alexandria-books:
+  alexandria-data:
+  alexandria-torch:
+  alexandria-hf:

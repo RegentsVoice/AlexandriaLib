@@ -314,13 +314,38 @@ function canSeeBook(book, user) {
   if (!book.isPrivate) return true;
   if (!user) return false;
   if (user.isAdmin) return true;
-  return book.ownerId === user.id;
+  return Number(book.ownerId) === Number(user.id);
 }
 
 function canEditBook(book, user) {
   if (!book || !user) return false;
   if (user.isAdmin) return true;
-  return book.ownerId === user.id;
+  return Number(book.ownerId) === Number(user.id);
+}
+
+
+const rateLimitMap = new Map();
+const RATE_WINDOW_MS = 60 * 1000;
+const RATE_MAX = 20;
+
+function rateLimitAuth(req, res, next) {
+  const ip = req.ip || req.connection?.remoteAddress || "unknown";
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.start > RATE_WINDOW_MS) {
+    entry = { start: now, count: 0 };
+    rateLimitMap.set(ip, entry);
+  }
+  entry.count++;
+  if (entry.count > RATE_MAX) {
+    return res.status(429).json({ error: "Слишком много попыток. Подождите минуту." });
+  }
+  if (rateLimitMap.size > 5000) {
+    for (const [k, v] of rateLimitMap) {
+      if (now - v.start > RATE_WINDOW_MS * 2) rateLimitMap.delete(k);
+    }
+  }
+  next();
 }
 
 function registerAuthRoutes(app) {
@@ -337,7 +362,7 @@ function registerAuthRoutes(app) {
     });
   });
 
-  app.post("/api/auth/register", (req, res) => {
+  app.post("/api/auth/register", rateLimitAuth, (req, res) => {
     const cfg = getAccessConfig();
     if (cfg.registrationDisabled) {
       return res.status(403).json({ error: "Регистрация отключена" });
@@ -350,7 +375,7 @@ function registerAuthRoutes(app) {
     res.json({ user: result.user });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", rateLimitAuth, (req, res) => {
     const { username, password } = req.body || {};
     const result = loginUser(username, password);
     if (result.error) return res.status(result.status || 401).json({ error: result.error });
@@ -378,6 +403,15 @@ function registerAdminRoutes(app, { deleteBooksByOwner, createBackup } = {}) {
     res.json(getAccessConfig());
   });
 
+  app.put("/api/admin/config", requireAuth, requireAdmin, (req, res) => {
+    const body = req.body || {};
+    const cfg = getAccessConfig();
+    if (body.localhostOnly != null) cfg.localhostOnly = !!body.localhostOnly;
+    if (body.registrationDisabled != null) cfg.registrationDisabled = !!body.registrationDisabled;
+    const saved = saveAccessConfig(cfg);
+    res.json(saved);
+  });
+
   app.post("/api/admin/config", requireAuth, requireAdmin, (req, res) => {
     const body = req.body || {};
     const cfg = getAccessConfig();
@@ -388,8 +422,53 @@ function registerAdminRoutes(app, { deleteBooksByOwner, createBackup } = {}) {
   });
 
   app.get("/api/admin/users", requireAuth, requireAdmin, (req, res) => {
-    const users = loadUsers().map(publicUser);
+    const users = loadUsers().map((u) => {
+      const pu = publicUser(u);
+      const owned = db.getBooksByOwner(u.id, u.username);
+      pu.booksCount = owned.length;
+      pu.privateCount = owned.filter((b) => !!b.isPrivate).length;
+      return pu;
+    });
     res.json({ users });
+  });
+
+  app.get("/api/admin/users/:id/books", requireAuth, requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Неверный id" });
+    const user = findUserById(id);
+    if (!user) return res.status(404).json({ error: "Пользователь не найден" });
+    const lib = db.getBooksByOwner(id, user.username);
+    const pathMod = require("path");
+    const fsMod = require("fs");
+    const booksDir = pathMod.join(__dirname, "books");
+    const books = lib.map((b) => {
+      const st = db.getUserBookState(user, b.id);
+      const coverFile = b.coverFile || null;
+      const hasCover = !!(coverFile && fsMod.existsSync(pathMod.join(booksDir, coverFile)));
+      return {
+        id: b.id,
+        title: b.title,
+        author: b.author || "",
+        format: b.format,
+        progress: st.progress || 0,
+        chapterIndex: st.chapterIndex || 0,
+        charOffset: st.charOffset || 0,
+        addedAt: b.addedAt,
+        chaptersCount: b.chaptersCount || 0,
+        pageCount: b.pageCount || 0,
+        hasCover,
+        series: b.series || "",
+        year: b.year || null,
+        description: b.description || "",
+        status: st.status || "queue",
+        isPrivate: !!b.isPrivate,
+        ownerId: b.ownerId != null ? b.ownerId : null,
+        ownerName: b.ownerName || null,
+        bookmarks: st.bookmarks || [],
+        lastTts: st.lastTts || null,
+      };
+    });
+    res.json({ user: publicUser(user), books });
   });
 
   app.delete("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {

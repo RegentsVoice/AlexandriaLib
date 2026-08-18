@@ -1,23 +1,53 @@
+# Dependencies
 node_modules/
+
+# Runtime data
 books/
 data/
-*.log
-.DS_Store
-Thumbs.db
-package-lock.json
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Python
 python/.venv/
-python/cache/
 python/.torch/
 python/.hf/
-python/__pycache__/
-python/**/__pycache__/
-python/_preload.py
 python/.setup-ok
-**/*.pyc
+python/__pycache__/
+python/*.pyc
+python/_preload.py
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
 
-# Env / local
+# Environment
 .env
 .env.*
 !.env.example
+
+# Logs & temp
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+.cache/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Desktop.ini
+
+# Build / coverage (if any)
+coverage/
+dist/
+build/

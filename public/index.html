@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#f4ecd8" />
   <title>AlexandriaLib</title>
-  <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" />
+  <link rel="icon" type="image/png" sizes="256x256" href="/logo.png" />
   <link rel="icon" type="image/png" sizes="1024x1024" href="/logo.png" />
   <link rel="apple-touch-icon" href="/logo.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -16,7 +16,7 @@
   <div id="authView" class="view auth-view hidden">
     <div class="auth-card">
       <div class="auth-brand">
-        <img src="/logo.png" alt="" class="auth-logo" width="72" height="72" />
+        <img src="/logo.png" alt="AlexandriaLib" class="auth-logo" width="88" height="88" />
         <h1>AlexandriaLib</h1>
       </div>
       <div class="auth-tabs" role="tablist">
@@ -31,6 +31,10 @@
         <label class="auth-field">
           <span>Пароль</span>
           <input type="password" id="authPassword" name="password" required minlength="4" autocomplete="current-password" />
+        </label>
+        <label class="auth-field auth-confirm-field hidden" id="authConfirmWrap">
+          <span>Подтверждение пароля</span>
+          <input type="password" id="authPasswordConfirm" name="passwordConfirm" minlength="4" autocomplete="new-password" />
         </label>
         <p id="authError" class="auth-error hidden" role="alert"></p>
         <button type="submit" class="btn-primary auth-submit" id="authSubmit">Войти</button>
@@ -50,8 +54,8 @@
     <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M7 5h3a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm7 0h3a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></symbol>
-<symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zm3.5.14a1 1 0 0 1 1.5-.86l9 5.86a1 1 0 0 1 0 1.72l-9 5.86a1 1 0 0 1-1.5-.86V5.14z" transform="scale(-1 1) translate(-24 0)"/></symbol>
-    <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M17 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zM5.5 5.14a1 1 0 0 1 1.5-.86l9 5.86a1 1 0 0 1 0 1.72l-9 5.86a1 1 0 0 1-1.5-.86V5.14z"/></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V7a1 1 0 0 1 1-1zm11.5 0.2a1 1 0 0 1 0 1.6L10.2 12l7.3 4.2a1 1 0 1 1-1 1.74l-8.5-4.9a1 1 0 0 1 0-1.74l8.5-4.9a1 1 0 0 1 1 0z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M18 6a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V7a1 1 0 0 1 1-1zM6.5 6.2a1 1 0 0 1 1 0l8.5 4.9a1 1 0 0 1 0 1.74l-8.5 4.9a1 1 0 1 1-1-1.74L13.8 12 6.5 7.8a1 1 0 0 1 0-1.6z"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
@@ -143,9 +147,6 @@
       <button type="button" id="sleepHeaderBadge" class="sleep-header-badge hidden" title="Таймер сна" aria-label="Таймер сна">
         <svg class="icon sleep-header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2"/></svg>
         <span id="sleepHeaderText">0:00</span>
-      </button>
-      <button id="btnBookmark" class="btn-icon" title="Закладка" aria-label="Закладка">
-        <svg class="icon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 4h12v16l-6-3-6 3V4z"/></svg>
       </button>
       <button id="btnToc" class="btn-icon" title="Оглавление" aria-label="Оглавление">
         <svg class="icon"><use href="#i-toc"/></svg>
@@ -258,13 +259,29 @@
     </header>
     <div class="detail-scroll">
       <div class="detail-card">
-        <div class="detail-hero">
-          <div id="detailCover" class="detail-cover"></div>
+        <div class="detail-side">
+          <div class="detail-hero">
+            <div id="detailCover" class="detail-cover"></div>
+            <div id="detailCoverActions" class="detail-cover-actions hidden">
+              <button type="button" class="btn-secondary sm" id="btnDetailCoverChange">Сменить</button>
+              <button type="button" class="btn-secondary sm" id="btnDetailCoverRemove">Убрать</button>
+              <input type="file" id="detailCoverInput" class="hidden" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" />
+            </div>
+          </div>
+          <p id="detailOwnerLine" class="detail-owner-line hidden"></p>
         </div>
         <div class="detail-body">
-          <input id="detailTitle" class="detail-title-input" type="text" maxlength="300" placeholder="Название" autocomplete="off" />
-          <input id="detailAuthor" class="detail-author-input" type="text" maxlength="200" placeholder="Автор" autocomplete="off" />
-          <div id="detailMeta" class="detail-meta"></div>
+          <div class="detail-body-top">
+            <div class="detail-body-info">
+              <input id="detailTitle" class="detail-title-input" type="text" maxlength="300" placeholder="Название" autocomplete="off" />
+              <input id="detailAuthor" class="detail-author-input" type="text" maxlength="200" placeholder="Автор" autocomplete="off" />
+              <div id="detailMeta" class="detail-meta"></div>
+            </div>
+            <div class="detail-actions">
+              <button id="btnDetailRead" class="btn-primary">Читать</button>
+              <button id="btnDetailContinue" class="btn-secondary hidden">Продолжить</button>
+            </div>
+          </div>
           <div class="detail-fields">
             <label class="detail-field">
               <span>Серия</span>
@@ -272,7 +289,7 @@
             </label>
             <label class="detail-field">
               <span>Год</span>
-              <input id="detailYear" type="number" class="field-input" min="1" max="2100" placeholder="—" />
+              <input id="detailYear" type="number" class="field-input field-year" min="1" max="2100" placeholder="—" inputmode="numeric" />
             </label>
             <label class="detail-field">
               <span>Статус</span>
@@ -300,15 +317,10 @@
               <span class="switch-track" aria-hidden="true"></span>
             </span>
           </label>
-          <label class="detail-field detail-field-block">
+          <label class="detail-field detail-field-block detail-desc-block">
             <span>Описание</span>
-            <textarea id="detailDesc" class="field-input field-textarea" rows="3" maxlength="2000" placeholder="Добавить описание…"></textarea>
+            <textarea id="detailDesc" class="field-input field-textarea" rows="6" maxlength="2000" placeholder="Добавить описание…"></textarea>
           </label>
-          <div class="detail-actions">
-            <button id="btnDetailRead" class="btn-primary">Читать</button>
-            <button id="btnDetailContinue" class="btn-secondary hidden">Продолжить</button>
-          </div>
-          <p class="detail-save-hint" id="detailSaveHint"></p>
         </div>
       </div>
     </div>
@@ -338,7 +350,7 @@
       </div>
       <div class="settings-layout">
         <nav class="settings-tabs" role="tablist" aria-label="Разделы">
-          <button type="button" class="settings-tab active" data-tab="text" role="tab" aria-selected="true">Текст</button>
+          <button type="button" class="settings-tab active" data-tab="text" role="tab" aria-selected="true">Ридер</button>
           <button type="button" class="settings-tab" data-tab="theme" role="tab" aria-selected="false">Тема</button>
           <button type="button" class="settings-tab" data-tab="account" role="tab" aria-selected="false">Аккаунт</button>
           <button type="button" class="settings-tab" data-tab="keys" role="tab" aria-selected="false">Клавиши</button>
@@ -376,7 +388,21 @@
                 <option value="chapter">По главам</option>
               </select>
             </label>
-            <p class="settings-hint">Разворот на две страницы. На узком экране — одна.</p>
+            <hr class="settings-sep" />
+            <label class="switch-row settings-switch">
+              <span class="switch-label">Мини-плеер внизу</span>
+              <span class="switch">
+                <input type="checkbox" id="settingShowMiniPlayer" checked />
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="switch-row settings-switch">
+              <span class="switch-label">Аудиоволна</span>
+              <span class="switch">
+                <input type="checkbox" id="settingShowWaveform" checked />
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
           </div>
           <div class="settings-pane" data-pane="theme" role="tabpanel" hidden>
             <label class="settings-row">
@@ -396,21 +422,26 @@
             </div>
           </div>
           <div class="settings-pane" data-pane="account" role="tabpanel" hidden>
-            <label class="settings-row">
-              <span>Текущий пароль</span>
-              <input type="password" id="pwdOld" autocomplete="current-password" />
-            </label>
-            <label class="settings-row">
-              <span>Новый пароль</span>
-              <input type="password" id="pwdNew" autocomplete="new-password" />
-            </label>
-            <button type="button" class="btn-primary" id="btnChangePassword">Сменить пароль</button>
+            <div class="pwd-form">
+              <label class="pwd-field">
+                <span>Текущий пароль</span>
+                <input type="password" id="pwdOld" class="field-input" autocomplete="current-password" />
+              </label>
+              <label class="pwd-field">
+                <span>Новый пароль</span>
+                <input type="password" id="pwdNew" class="field-input" autocomplete="new-password" minlength="4" />
+              </label>
+              <label class="pwd-field">
+                <span>Подтверждение нового пароля</span>
+                <input type="password" id="pwdNewConfirm" class="field-input" autocomplete="new-password" minlength="4" />
+              </label>
+              <button type="button" class="btn-primary" id="btnChangePassword">Сменить пароль</button>
+            </div>
           </div>
           <div class="settings-pane" data-pane="keys" role="tabpanel" hidden>
             <ul class="keys-list">
               <li><kbd>←</kbd> / <kbd>→</kbd> — страница</li>
               <li><kbd>Space</kbd> — TTS play/pause</li>
-              <li><kbd>B</kbd> — закладка</li>
               <li><kbd>T</kbd> — оглавление</li>
               <li><kbd>Esc</kbd> — назад / закрыть</li>
             </ul>
@@ -437,6 +468,12 @@
             <button type="button" class="btn-secondary" id="btnDownloadBackup" style="margin-top:10px">Скачать backup</button>
           </div>
           <div class="settings-pane" data-pane="users" role="tabpanel" hidden>
+            <div class="admin-users-toolbar">
+              <div class="search-field admin-users-search">
+                <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+                <input type="search" id="adminUserSearch" class="lib-search" placeholder="Поиск пользователей" enterkeyhint="search" autocomplete="off" />
+              </div>
+            </div>
             <div id="adminUsersList" class="admin-users-list"></div>
             <div id="adminUserBooks" class="admin-user-books hidden"></div>
           </div>
@@ -445,7 +482,20 @@
     </div>
   </div>
 
-  <div id="uploadOverlay" class="overlay hidden" role="dialog" aria-label="Загрузка книги">
+  
+  <div id="userLibraryOverlay" class="overlay hidden" role="dialog" aria-label="Библиотека пользователя">
+    <div class="overlay-panel user-library-panel">
+      <div class="overlay-header">
+        <h2 id="userLibraryTitle">Библиотека</h2>
+        <button type="button" id="btnCloseUserLibrary" class="btn-icon" title="Закрыть" aria-label="Закрыть">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <div id="userLibraryGrid" class="user-library-grid lib-grid"></div>
+    </div>
+  </div>
+
+<div id="uploadOverlay" class="overlay hidden" role="dialog" aria-label="Загрузка книги">
     <div class="overlay-panel upload-panel">
       <div class="overlay-header">
         <h2>Добавить книгу</h2>
@@ -481,6 +531,11 @@
   </div>
 
   <div id="toastHost" aria-live="polite"></div>
+  <script src="js/core.js"></script>
+  <script src="js/tts.js"></script>
+  <script src="js/library.js"></script>
+  <script src="js/reader.js"></script>
+  <script src="js/settings.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

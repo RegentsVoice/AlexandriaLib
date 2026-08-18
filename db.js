@@ -615,6 +615,21 @@ function listDbFiles() {
   return files;
 }
 
+
+function getBooksByOwner(ownerId, ownerName) {
+  const all = loadBooks();
+  const id = ownerId != null ? Number(ownerId) : null;
+  const name = ownerName ? String(ownerName).toLowerCase() : "";
+  return all.filter((b) => {
+    if (b.ownerId != null && b.ownerId !== "" && !Number.isNaN(Number(b.ownerId))) {
+      return Number(b.ownerId) === id;
+    }
+    if (name && b.ownerName && String(b.ownerName).toLowerCase() === name) return true;
+    if ((b.ownerId == null || b.ownerId === "") && id === 1) return true;
+    return false;
+  });
+}
+
 module.exports = {
   getCore,
   getUserDb,
@@ -633,6 +648,7 @@ module.exports = {
   deleteSession,
   deleteSessionsForUser,
   loadBooks,
+  getBooksByOwner,
   getBookById,
   insertBook,
   updateBook,
