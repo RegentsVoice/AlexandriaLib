@@ -10,7 +10,6 @@ data/
 *.sqlite-shm
 
 # Python
-python/cache/
 python/.venv/
 python/.torch/
 python/.hf/

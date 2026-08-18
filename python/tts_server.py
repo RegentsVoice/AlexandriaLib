@@ -41,25 +41,25 @@ def prune_cache():
     except OSError:
         pass
 
-print("AL: RUAccent...", flush=True)
+print("RUAccent...", flush=True)
 accentizer = RUAccent()
 accentizer.load(
     omograph_model_size="turbo3.1",
     use_dictionary=True,
     device="CPU",
 )
-print("AL: RUAccent ok", flush=True)
-print("AL: Silero TTS...", flush=True)
+print("RUAccent ok", flush=True)
+print("Silero TTS...", flush=True)
 device = torch.device("cpu")
 model, _ = torch.hub.load(
     repo_or_dir="snakers4/silero-models",
     model="silero_tts",
     language="ru",
-    speaker="v5_ru",
+    speaker="v5_5_ru",
     trust_repo=True,
 )
 model.to(device)
-print("AL: Silero ok", flush=True)
+print("Silero ok", flush=True)
 
 app = FastAPI(title="AlexandriaLib TTS", version="1.0.0")
 
@@ -72,7 +72,6 @@ def get_cache_key(text: str, speaker: str, speed: float) -> str:
     raw = f"{text}|{speaker}|{speed:.2f}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-import re
 
 _ABBR_EXPAND = [
     (re.compile(r"\bт\.\s*е\.", re.I), "то есть"),
@@ -96,6 +95,61 @@ _ABBR_EXPAND = [
     (re.compile(r"\bрис\.", re.I), "рисунок"),
     (re.compile(r"\bсм\.", re.I), "смотри"),
 ]
+
+
+_PHRASE_STRESS = [
+    (re.compile(r"\bс\s+кем\s+бы\s+то\s+ни\s+было\b", re.I), "с кем бы то ни бы+ло"),
+    (re.compile(r"\bкак\s+бы\s+то\s+ни\s+было\b", re.I), "как бы то ни бы+ло"),
+    (re.compile(r"\bчто\s+бы\s+то\s+ни\s+было\b", re.I), "что бы то ни бы+ло"),
+    (re.compile(r"\bгде\s+бы\s+то\s+ни\s+было\b", re.I), "где бы то ни бы+ло"),
+    (re.compile(r"\bкогда\s+бы\s+то\s+ни\s+было\b", re.I), "когда бы то ни бы+ло"),
+    (re.compile(r"\bкуда\s+бы\s+то\s+ни\s+было\b", re.I), "куда бы то ни бы+ло"),
+    (re.compile(r"\bоткуда\s+бы\s+то\s+ни\s+было\b", re.I), "откуда бы то ни бы+ло"),
+    (re.compile(r"\bкто\s+бы\s+то\s+ни\s+был\b", re.I), "кто бы то ни был"),
+    (re.compile(r"\bчем\s+бы\s+то\s+ни\s+было\b", re.I), "чем бы то ни бы+ло"),
+    (re.compile(r"\bво\s+что\s+бы\s+то\s+ни\s+стало\b", re.I), "во что бы то ни ста+ло"),
+    (re.compile(r"\bтем\s+не\s+менее\b", re.I), "тем не ме+нее"),
+    (re.compile(r"\bтак\s+или\s+иначе\b", re.I), "так или ина+че"),
+]
+
+_WORD_PRONUNCE = [
+    (re.compile(r"\bброктон[-\s]?бей\b", re.I), "Броктон-Бэй"),
+    (re.compile(r"\bгледли\b", re.I), "Глэдли"),
+    (re.compile(r"\bглед\b", re.I), "Глэд"),
+    (re.compile(r"\bбей\b", re.I), "бэй"),
+    (re.compile(r"\bбея\b", re.I), "бэя"),
+    (re.compile(r"\bбеем\b", re.I), "бэем"),
+    (re.compile(r"\bбею\b", re.I), "бэю"),
+    (re.compile(r"\bтейлор\b", re.I), "Тэйлор"),
+    (re.compile(r"\bхеллхаунд\b", re.I), "Хэллхаунд"),
+    (re.compile(r"\bэндрю\b", re.I), "Эндрю"),
+    (re.compile(r"\bэмбер\b", re.I), "Эмбер"),
+]
+
+def _preserve_case_replace(match, repl: str) -> str:
+    src = match.group(0)
+    if not src or not repl:
+        return repl
+    if src.isupper():
+        return repl.upper()
+    if src[0].isupper():
+        return repl[:1].upper() + repl[1:]
+    return repl[:1].lower() + repl[1:]
+
+def apply_pronunciation_fixes(text: str) -> str:
+    t = text
+    for rx, repl in _WORD_PRONUNCE:
+        t = rx.sub(lambda m, r=repl: _preserve_case_replace(m, r), t)
+    t = re.sub(r"([А-Яа-яЁё]+)-[Бб]ей\b", r"\1-Бэй", t)
+    for rx, repl in _PHRASE_STRESS:
+        def _ph(m, r=repl):
+            s = m.group(0)
+            if s[:1].isupper():
+                return r[:1].upper() + r[1:]
+            return r
+        t = rx.sub(_ph, t)
+    return t
+
 
 def normalize_for_tts(text: str) -> str:
     t = (text or "").strip()
@@ -143,6 +197,7 @@ def normalize_for_tts(text: str) -> str:
     if t and t[-1] not in ".!?…:":
         if re.search(r"[0-9A-Za-zА-Яа-яЁё]$", t):
             t = t + "."
+    t = apply_pronunciation_fixes(t)
     return t.strip()
 
 def synthesize(text: str, speaker: str = "xenia", speed: float = 1.0) -> bytes:
@@ -153,14 +208,24 @@ def synthesize(text: str, speaker: str = "xenia", speed: float = 1.0) -> bytes:
     if not text:
         raise ValueError("Пустой текст")
 
+    protected = []
+    def _protect_plus(m):
+        protected.append(m.group(0))
+        return "ПРОТ" + str(len(protected) - 1) + "Х"
+
+    text_for_acc = re.sub(r"\S*\+\S*", _protect_plus, text)
     try:
-        text_with_stress = accentizer.process_all(text)
+        text_with_stress = accentizer.process_all(text_for_acc)
     except Exception as e:
         print("RUAccent error:", e)
-        text_with_stress = text
+        text_with_stress = text_for_acc
 
     if not (text_with_stress or "").strip():
-        text_with_stress = text
+        text_with_stress = text_for_acc
+
+    for i, p in enumerate(protected):
+        text_with_stress = text_with_stress.replace("ПРОТ" + str(i) + "Х", p)
+        text_with_stress = text_with_stress.replace("прот" + str(i) + "х", p)
 
     try:
         audio = model.apply_tts(
@@ -168,7 +233,7 @@ def synthesize(text: str, speaker: str = "xenia", speed: float = 1.0) -> bytes:
             speaker=speaker,
             sample_rate=SAMPLE_RATE,
             put_accent=False,
-            put_yo=False,
+            put_yo=True,
             put_stress_homo=False,
             put_yo_homo=False,
         )
@@ -238,5 +303,5 @@ def speakers():
 
 if __name__ == "__main__":
     import uvicorn
-    print("AL: TTS server listening :8765", flush=True)
+    print("TTS server listening :8765", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
